@@ -7,6 +7,7 @@ import { addDays, formatDate, formatDateLong, getTodayIso } from "./utils/date";
 import { pullSync, pushSync } from "./sync";
 import QRCodeDisplay from "./QRCodeDisplay";
 import QRCodeScanner from "./QRCodeScanner";
+import { fetchInboxApi, fetchMessageApi, extractFromMailApi, sendMailApi } from "./mail";
 
 // ---- Design tokens ----
 // Couleurs : vert sapin (#25332A), mousse (#5B7A52), pierre/argile (#B7A480),
@@ -624,6 +625,10 @@ export default function CRMPaysagiste() {
             onNewTask={() => setShowNewTask(true)}
           />
         )}
+
+        {view.page === "mail" && (
+          <MailPage onExtractToClient={handleExtracted} />
+        )}
       </main>
 
       <MobileNav view={view} setView={setView} />
@@ -659,6 +664,7 @@ function Sidebar({ view, setView, onSync, syncStatus, hasSyncCode }) {
     { key: "dashboard", label: "Tableau de bord" },
     { key: "clients", label: "Clients" },
     { key: "tasks", label: "Tâches" },
+    { key: "mail", label: "Boîte mail" },
   ];
   const syncLabel = {
     idle: hasSyncCode ? "Synchroniser" : "Configurer la synchro",
@@ -721,6 +727,7 @@ function MobileNav({ view, setView }) {
     { key: "dashboard", label: "Accueil" },
     { key: "clients", label: "Clients" },
     { key: "tasks", label: "Tâches" },
+    { key: "mail", label: "Mail" },
   ];
   return (
     <nav className="mobile-nav" style={{
@@ -1123,6 +1130,183 @@ const sectionLabelStyle = {
   fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: 1,
   textTransform: "uppercase", color: "#8B8378", marginBottom: 8,
 };
+
+function MailPage({ onExtractToClient }) {
+  const [messages, setMessages] = useState(null);
+  const [loadingList, setLoadingList] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [sentOk, setSentOk] = useState(false);
+
+  async function loadInbox() {
+    setLoadingList(true);
+    setErrorMsg("");
+    try {
+      const data = await fetchInboxApi(25);
+      setMessages(data.messages);
+    } catch (e) {
+      setErrorMsg("Impossible de charger la boîte mail. Vérifie la configuration du serveur (server/.env).");
+      setMessages([]);
+    }
+    setLoadingList(false);
+  }
+
+  useEffect(() => { loadInbox(); }, []);
+
+  async function openMessage(uid) {
+    setLoadingDetail(true);
+    setSelected(null);
+    setReplyOpen(false);
+    setSentOk(false);
+    setErrorMsg("");
+    try {
+      const data = await fetchMessageApi(uid);
+      setSelected(data);
+    } catch (e) {
+      setErrorMsg("Impossible d'ouvrir cet email.");
+    }
+    setLoadingDetail(false);
+  }
+
+  async function createClientFromMessage() {
+    if (!selected) return;
+    setExtracting(true);
+    setErrorMsg("");
+    try {
+      const parsed = await extractFromMailApi(selected.uid);
+      onExtractToClient({
+        name: parsed.name || "",
+        address: parsed.address || "",
+        phone: parsed.phone || "",
+        email: parsed.email || "",
+        gardenType: parsed.gardenType || "",
+        status: parsed.status || "prospect",
+        notes: parsed.notes || "",
+        _reminder: !!parsed.requestsContact,
+      });
+    } catch (e) {
+      setErrorMsg("L'extraction a échoué. Réessaie, ou crée le client manuellement.");
+    }
+    setExtracting(false);
+  }
+
+  async function sendReply() {
+    if (!selected || !replyText.trim()) return;
+    setSending(true);
+    setErrorMsg("");
+    try {
+      const match = selected.from.match(/<(.+)>/);
+      const to = match ? match[1] : selected.from;
+      await sendMailApi({ to, subject: `Re: ${selected.subject}`, text: replyText });
+      setReplyOpen(false);
+      setReplyText("");
+      setSentOk(true);
+    } catch (e) {
+      setErrorMsg("L'envoi a échoué.");
+    }
+    setSending(false);
+  }
+
+  return (
+    <div>
+      <SectionTitle action={
+        <button onClick={loadInbox} style={{
+          background: "none", border: "1px solid #DCD8C8", borderRadius: 6, padding: "7px 12px",
+          fontSize: 12.5, cursor: "pointer", fontFamily: "'IBM Plex Sans', sans-serif",
+        }}>
+          {loadingList ? "Actualisation…" : "Actualiser"}
+        </button>
+      }>
+        Boîte mail
+      </SectionTitle>
+
+      {errorMsg && (
+        <div style={{ background: "#FBEAE8", border: "1px solid #E3B9B3", borderRadius: 6, padding: "9px 11px", fontSize: 12.5, color: "#8A3A32", marginBottom: 16 }}>
+          {errorMsg}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+          {messages === null && <div style={{ fontSize: 13, color: "#8B8378" }}>Chargement…</div>}
+          {messages?.length === 0 && !errorMsg && <EmptyState text="Boîte de réception vide." />}
+          {messages?.map((m) => (
+            <button key={m.uid} onClick={() => openMessage(m.uid)} style={{
+              display: "block", width: "100%", textAlign: "left",
+              background: selected?.uid === m.uid ? "#F7F5EC" : "transparent",
+              border: "1px solid transparent", borderBottom: "1px solid #E4E0D0",
+              borderRadius: 6, padding: "10px 10px", cursor: "pointer",
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#25332A" }}>{m.fromName || m.from}</div>
+              <div style={{ fontSize: 12.5, color: "#5A5347", marginTop: 2 }}>{m.subject}</div>
+              <div style={{ fontSize: 11, color: "#8B8378", fontFamily: "'IBM Plex Mono', monospace", marginTop: 3 }}>
+                {m.date ? new Date(m.date).toLocaleDateString("fr-FR") : ""}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 280 }}>
+          {loadingDetail && <div style={{ fontSize: 13, color: "#8B8378" }}>Chargement…</div>}
+          {!loadingDetail && !selected && (
+            <div style={{ fontSize: 13, color: "#8B8378" }}>Sélectionne un email à gauche.</div>
+          )}
+          {selected && (
+            <div>
+              <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600, marginBottom: 4 }}>
+                {selected.subject}
+              </h3>
+              <div style={{ fontSize: 12.5, color: "#5A5347", marginBottom: 16 }}>
+                De : {selected.from}
+                {selected.date && ` — ${new Date(selected.date).toLocaleString("fr-FR")}`}
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+                <PrimaryButton onClick={createClientFromMessage}>
+                  <Sparkles size={15} /> {extracting ? "Extraction…" : "Créer un client à partir de cet email"}
+                </PrimaryButton>
+                <button onClick={() => setReplyOpen((v) => !v)} style={{
+                  background: "transparent", border: "1px solid #DCD8C8", borderRadius: 6,
+                  padding: "9px 16px", fontSize: 14, cursor: "pointer", fontFamily: "'IBM Plex Sans', sans-serif",
+                }}>
+                  Répondre
+                </button>
+              </div>
+
+              {sentOk && (
+                <div style={{ fontSize: 12.5, color: "#3E6B37", marginBottom: 14 }}>✓ Réponse envoyée.</div>
+              )}
+
+              {replyOpen && (
+                <div style={{ marginBottom: 18, border: "1px solid #DCD8C8", borderRadius: 8, padding: 12, background: "#F7F5EC" }}>
+                  <textarea
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    rows={5}
+                    style={{ width: "100%", border: "1px solid #DCD8C8", borderRadius: 6, padding: 8, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13.5, resize: "vertical" }}
+                    placeholder="Ta réponse…"
+                  />
+                  <PrimaryButton style={{ marginTop: 8 }} onClick={sendReply}>
+                    {sending ? "Envoi…" : "Envoyer"}
+                  </PrimaryButton>
+                </div>
+              )}
+
+              <div style={{ fontSize: 14, lineHeight: 1.65, whiteSpace: "pre-wrap", color: "#1C2620" }}>
+                {selected.text}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function DaySchedule({ tasks, clientById, toggleTask, deleteTask, selectedDay }) {
   const [now, setNow] = useState(() => new Date());

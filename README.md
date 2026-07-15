@@ -107,6 +107,37 @@ garanti persistant sur le long terme (peut être remis à zéro lors d'un redép
 Pour un usage sérieux et durable, remplacer `server/sync-store.json` par une vraie
 base de données (Postgres, Redis, etc.).
 
+## Boîte mail pro (OVH Zimbra)
+
+Un onglet **"Boîte mail"** permet de consulter les emails reçus, répondre, et surtout
+créer un client en un clic directement depuis un email (plus besoin de copier-coller).
+
+**Configuration (server/.env) :**
+```
+MAIL_IMAP_HOST=ssl0.ovh.net
+MAIL_IMAP_PORT=993
+MAIL_SMTP_HOST=ssl0.ovh.net
+MAIL_SMTP_PORT=465
+MAIL_USER=contact@tondomaine.fr
+MAIL_PASSWORD=le-mot-de-passe-de-cette-boite-mail
+```
+Ce sont les paramètres officiels OVH (identiques pour Zimbra Starter/Pro et MX Plan).
+Si `ssl0.ovh.net` ne fonctionne pas pour ton compte, vérifie l'adresse exacte dans
+l'espace client OVHcloud → Web Cloud → Zimbra Mail → [ton compte] → Configuration.
+
+**Comment ça marche :**
+- Lecture : le backend se connecte en IMAP (lecture seule) à chaque appel — aucune
+  connexion permanente maintenue.
+- Envoi : SMTP via `nodemailer`, avec authentification.
+- "Créer un client à partir de cet email" : envoie le texte de l'email à la même IA
+  que le bouton "Créer via l'IA", pré-remplit une fiche client.
+- Les identifiants mail restent uniquement dans `server/.env`, jamais dans le frontend.
+
+⚠️ Si ton mot de passe de boîte mail contient des caractères spéciaux, encadre-le de
+guillemets dans `.env` si besoin. Certains fournisseurs recommandent un mot de passe
+d'application dédié plutôt que le mot de passe principal du compte — vérifie les
+options de sécurité dans l'espace client OVHcloud si disponible pour ton offre.
+
 ## Limites connues
 
 - Le stockage utilise `localStorage` (limite ~5-10 Mo selon les navigateurs). Pour un usage

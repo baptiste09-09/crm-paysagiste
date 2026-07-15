@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
+import { mailConfigured, fetchInbox, fetchMessage, sendMail } from "./mail.js";
 
 const app = express();
 app.use(cors());
@@ -67,52 +68,121 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balises m
 - "requestsContact": true UNIQUEMENT si l'expéditeur demande explicitement à être rappelé, recontacté, ou à avoir un échange téléphonique/rendez-vous. false sinon.
 Si une information est absente, mets une chaîne vide "". Ne rien inventer.`;
 
-app.post("/api/extract-client", async (req, res) => {
+// Fonction partagée : envoie un texte brut à Claude et récupère le JSON extrait.
+// Utilisée par /api/extract-client (copier-coller) ET /api/mail/extract/:uid (email direct).
+async function callExtraction(text) {
   if (!ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: "ANTHROPIC_API_KEY manquante côté serveur (voir server/.env)" });
+    throw Object.assign(new Error("ANTHROPIC_API_KEY manquante côté serveur (voir server/.env)"), { status: 500 });
   }
-  const text = (req.body?.text || "").toString().slice(0, 6000);
-  if (!text.trim()) {
-    return res.status(400).json({ error: "Texte vide" });
+  const trimmed = (text || "").toString().slice(0, 6000);
+  if (!trimmed.trim()) {
+    throw Object.assign(new Error("Texte vide"), { status: 400 });
   }
+
+  const anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: EXTRACTION_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: trimmed }],
+    }),
+  });
+
+  if (!anthropicResponse.ok) {
+    const errText = await anthropicResponse.text();
+    console.error("Anthropic API error:", anthropicResponse.status, errText);
+    throw Object.assign(new Error("Échec de l'appel à l'API Anthropic"), { status: 502 });
+  }
+
+  const data = await anthropicResponse.json();
+  const raw = (data.content || []).map((b) => b.text || "").join("").trim();
+  const cleaned = raw.replace(/^```json\s*|^```\s*|```$/g, "").trim();
 
   try {
-    const anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        system: EXTRACTION_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: text }],
-      }),
-    });
-
-    if (!anthropicResponse.ok) {
-      const errText = await anthropicResponse.text();
-      console.error("Anthropic API error:", anthropicResponse.status, errText);
-      return res.status(502).json({ error: "Échec de l'appel à l'API Anthropic" });
-    }
-
-    const data = await anthropicResponse.json();
-    const raw = (data.content || []).map((b) => b.text || "").join("").trim();
-    const cleaned = raw.replace(/^```json\s*|^```\s*|```$/g, "").trim();
-
-    let parsed;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (e) {
-      return res.status(502).json({ error: "Réponse IA non exploitable" });
-    }
-
-    return res.json(parsed);
+    return JSON.parse(cleaned);
   } catch (e) {
-    console.error("Erreur extraction:", e);
-    return res.status(500).json({ error: "Erreur serveur" });
+    throw Object.assign(new Error("Réponse IA non exploitable"), { status: 502 });
+  }
+}
+
+app.post("/api/extract-client", async (req, res) => {
+  try {
+    const parsed = await callExtraction(req.body?.text);
+    res.json(parsed);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// ---- Mail (boîte OVH Zimbra via IMAP/SMTP) ----
+
+app.get("/api/mail/inbox", async (req, res) => {
+  if (!mailConfigured()) {
+    return res.status(500).json({ error: "Compte mail non configuré côté serveur (voir server/.env)" });
+  }
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const messages = await fetchInbox(limit);
+    res.json({ messages });
+  } catch (e) {
+    console.error("Erreur inbox:", e);
+    res.status(502).json({ error: "Impossible de récupérer les emails (vérifie les identifiants et le serveur IMAP)" });
+  }
+});
+
+app.get("/api/mail/message/:uid", async (req, res) => {
+  if (!mailConfigured()) {
+    return res.status(500).json({ error: "Compte mail non configuré côté serveur (voir server/.env)" });
+  }
+  try {
+    const msg = await fetchMessage(req.params.uid);
+    if (!msg) return res.status(404).json({ error: "Message introuvable" });
+    res.json(msg);
+  } catch (e) {
+    console.error("Erreur message:", e);
+    res.status(502).json({ error: "Impossible de récupérer ce message" });
+  }
+});
+
+app.post("/api/mail/send", async (req, res) => {
+  if (!mailConfigured()) {
+    return res.status(500).json({ error: "Compte mail non configuré côté serveur (voir server/.env)" });
+  }
+  const { to, subject, text } = req.body || {};
+  if (!to || !subject || !text) return res.status(400).json({ error: "Champs manquants (to, subject, text)" });
+  try {
+    await sendMail({ to, subject, text });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("Erreur envoi:", e);
+    res.status(502).json({ error: "Échec de l'envoi (vérifie les identifiants et le serveur SMTP)" });
+  }
+});
+
+// Raccourci : extrait directement un client à partir d'un email de la boîte de réception
+// (évite le copier-coller — réutilise la même extraction IA que /api/extract-client).
+app.post("/api/mail/extract/:uid", async (req, res) => {
+  if (!mailConfigured()) {
+    return res.status(500).json({ error: "Compte mail non configuré côté serveur (voir server/.env)" });
+  }
+  try {
+    const msg = await fetchMessage(req.params.uid);
+    if (!msg) return res.status(404).json({ error: "Message introuvable" });
+    const parsed = await callExtraction(msg.text);
+    if (!parsed.email && msg.from) {
+      const match = msg.from.match(/<(.+)>/);
+      parsed.email = match ? match[1] : msg.from;
+    }
+    res.json(parsed);
+  } catch (e) {
+    console.error("Erreur extraction mail:", e);
+    res.status(e.status || 500).json({ error: e.message || "Erreur serveur" });
   }
 });
 
@@ -122,5 +192,8 @@ app.listen(PORT, () => {
   console.log(`Backend CRM Paysagiste sur http://localhost:${PORT}`);
   if (!ANTHROPIC_API_KEY) {
     console.warn("⚠️  ANTHROPIC_API_KEY n'est pas définie — copie server/.env.example en server/.env et renseigne ta clé.");
+  }
+  if (!mailConfigured()) {
+    console.warn("⚠️  Compte mail non configuré — le module Mail sera indisponible tant que server/.env n'est pas complété.");
   }
 });
