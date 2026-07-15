@@ -8,6 +8,11 @@ export default function QRCodeScanner({ onScan, onCancel }) {
   const rafRef = useRef(null);
   const [error, setError] = useState("");
 
+  // onScan est souvent une fonction inline recréée à chaque rendu du parent :
+  // la garder dans un ref évite que l'effet caméra ne se coupe/redémarre en boucle.
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -23,7 +28,7 @@ export default function QRCodeScanner({ onScan, onCancel }) {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const code = jsQR(imageData.data, imageData.width, imageData.height);
         if (code && code.data) {
-          onScan(code.data);
+          onScanRef.current(code.data);
           return;
         }
       }
@@ -54,7 +59,7 @@ export default function QRCodeScanner({ onScan, onCancel }) {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     };
-  }, [onScan]);
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>

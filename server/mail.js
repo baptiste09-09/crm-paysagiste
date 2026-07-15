@@ -24,8 +24,7 @@ export async function fetchInbox(limit = 20) {
   try {
     const lock = await client.getMailboxLock("INBOX");
     try {
-      const status = await client.status("INBOX", { messages: true });
-      const total = status.messages || 0;
+      const total = client.mailbox.exists || 0;
       if (total === 0) return [];
       const start = Math.max(1, total - limit + 1);
       for await (const msg of client.fetch(`${start}:*`, { envelope: true, uid: true, internalDate: true })) {
@@ -57,7 +56,7 @@ export async function fetchMessage(uid) {
       const { content } = await client.download(String(uid), undefined, { uid: true });
       const parsed = await simpleParser(content);
       result = {
-        uid,
+        uid: Number(uid),
         from: parsed.from?.text || "",
         subject: parsed.subject || "(sans objet)",
         date: parsed.date,

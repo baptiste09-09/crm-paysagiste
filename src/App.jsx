@@ -337,19 +337,20 @@ export default function CRMPaysagiste() {
     await bumpLastModified();
   }, [cryptoKey, bumpLastModified]);
 
-  async function handleSync() {
+  async function handleSync(codeOverride) {
     if (syncStatus === "syncing") return;
-    if (!syncCode) {
+    const code = codeOverride || syncCode;
+    if (!code) {
       setShowSyncSetup(true);
       return;
     }
     setSyncStatus("syncing");
     setSyncError("");
     try {
-      const remote = await pullSync(syncCode);
+      const remote = await pullSync(code);
       if (!remote || lastModified >= remote.lastModified) {
         // Nos données sont plus récentes (ou aucune donnée distante encore) : on envoie.
-        await pushSync(syncCode, { clients, tasks, lastModified });
+        await pushSync(code, { clients, tasks, lastModified });
         setSyncStatus("pushed");
         setRemoteUpdate(null);
       } else {
@@ -394,7 +395,7 @@ export default function CRMPaysagiste() {
     setSyncCode(code);
     try { await storage.set("sync-code", code); } catch (e) {}
     setShowSyncSetup(false);
-    setTimeout(() => handleSync(), 100);
+    setTimeout(() => handleSync(code), 100);
   }
 
   // ---- Synchro automatique en arrière-plan (aucun clic requis une fois configurée) ----
@@ -577,7 +578,7 @@ export default function CRMPaysagiste() {
         </div>
       )}
 
-      <Sidebar view={view} setView={setView} className="no-print" onSync={handleSync} syncStatus={syncStatus} hasSyncCode={!!syncCode} />
+      <Sidebar view={view} setView={setView} className="no-print" onSync={() => handleSync()} syncStatus={syncStatus} hasSyncCode={!!syncCode} />
 
       <main style={{ flex: 1, minWidth: 0, padding: "32px 28px 90px", maxWidth: 980, margin: "0 auto", width: "100%" }}>
         {view.page === "dashboard" && (

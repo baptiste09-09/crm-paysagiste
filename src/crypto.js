@@ -4,7 +4,15 @@
 // Si le PIN est perdu, les données chiffrées ne sont PAS récupérables (comportement voulu).
 
 function bufToB64(buf) {
-  return btoa(String.fromCharCode(...new Uint8Array(buf)));
+  // Conversion par blocs : String.fromCharCode(...) plante (RangeError) au-delà
+  // de ~100 Ko à cause de la limite d'arguments de la pile JavaScript.
+  const bytes = new Uint8Array(buf);
+  const CHUNK = 0x8000; // 32 Ko
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 function b64ToBuf(b64) {
