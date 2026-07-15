@@ -4,6 +4,7 @@ import { API_BASE } from "./config";
 import { storage } from "./storage";
 import { deriveKey, encryptJSON, decryptJSON } from "./crypto";
 import { addDays, formatDate, formatDateLong, getTodayIso } from "./utils/date";
+import { pullSync, pushSync } from "./sync";
 
 // ---- Design tokens ----
 // Couleurs : vert sapin (#25332A), mousse (#5B7A52), pierre/argile (#B7A480),
@@ -236,6 +237,13 @@ export default function CRMPaysagiste() {
   const [cryptoKey, setCryptoKey] = useState(null);
   const [hasPin, setHasPin] = useState(null); // null = inconnu, true/false une fois vérifié
 
+  // ---- Synchronisation entre appareils ----
+  const [lastModified, setLastModified] = useState(0);
+  const [syncCode, setSyncCode] = useState(null); // null = pas encore chargé/défini
+  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | pushed | pulled | error
+  const [showSyncSetup, setShowSyncSetup] = useState(false);
+  const [syncError, setSyncError] = useState("");
+
   useEffect(() => {
     (async () => {
       try {
@@ -269,6 +277,22 @@ export default function CRMPaysagiste() {
     setClients(cData);
     setTasks(tData);
 
+    // Horodatage de dernière modification locale (utilisé pour la synchro).
+    let lm = 0;
+    try {
+      const lmRaw = await storage.get("last-modified");
+      lm = lmRaw ? parseInt(lmRaw.value, 10) || 0 : 0;
+    } catch (e) {}
+    setLastModified(lm);
+
+    // Code de synchro déjà configuré sur cet appareil, s'il existe.
+    try {
+      const codeRaw = await storage.get("sync-code");
+      setSyncCode(codeRaw ? codeRaw.value : "");
+    } catch (e) {
+      setSyncCode("");
+    }
+
     try {
       const c = await storage.get("clients");
       if (!c) await storage.set("clients", await encryptJSON(key, cData));
@@ -288,17 +312,77 @@ export default function CRMPaysagiste() {
     await loadData(key);
   }
 
+  const bumpLastModified = useCallback(async () => {
+    const now = Date.now();
+    setLastModified(now);
+    try { await storage.set("last-modified", String(now)); } catch (e) {}
+    return now;
+  }, []);
+
   const persistClients = useCallback(async (next) => {
     setClients(next);
     if (!cryptoKey) return;
     try { await storage.set("clients", await encryptJSON(cryptoKey, next)); } catch (e) {}
-  }, [cryptoKey]);
+    await bumpLastModified();
+  }, [cryptoKey, bumpLastModified]);
 
   const persistTasks = useCallback(async (next) => {
     setTasks(next);
     if (!cryptoKey) return;
     try { await storage.set("tasks", await encryptJSON(cryptoKey, next)); } catch (e) {}
-  }, [cryptoKey]);
+    await bumpLastModified();
+  }, [cryptoKey, bumpLastModified]);
+
+  async function handleSync() {
+    if (syncStatus === "syncing") return;
+    if (!syncCode) {
+      setShowSyncSetup(true);
+      return;
+    }
+    setSyncStatus("syncing");
+    setSyncError("");
+    try {
+      const remote = await pullSync(syncCode);
+      if (!remote || lastModified >= remote.lastModified) {
+        // Nos données sont plus récentes (ou aucune donnée distante encore) : on envoie.
+        await pushSync(syncCode, { clients, tasks, lastModified });
+        setSyncStatus("pushed");
+      } else {
+        // Les données distantes sont plus récentes : on demande avant d'écraser l'appareil actuel.
+        const when = new Date(remote.lastModified).toLocaleString("fr-FR");
+        const ok = window.confirm(
+          `Des données plus récentes existent sur un autre appareil (mises à jour le ${when}).\n\n` +
+          `Les récupérer remplacera les données présentes sur CET appareil. Continuer ?`
+        );
+        if (ok) {
+          setClients(remote.data.clients);
+          setTasks(remote.data.tasks);
+          setLastModified(remote.lastModified);
+          if (cryptoKey) {
+            try {
+              await storage.set("clients", await encryptJSON(cryptoKey, remote.data.clients));
+              await storage.set("tasks", await encryptJSON(cryptoKey, remote.data.tasks));
+              await storage.set("last-modified", String(remote.lastModified));
+            } catch (e) {}
+          }
+          setSyncStatus("pulled");
+        } else {
+          setSyncStatus("idle");
+        }
+      }
+    } catch (e) {
+      setSyncError("La synchronisation a échoué. Vérifie ta connexion et réessaie.");
+      setSyncStatus("error");
+    }
+    setTimeout(() => setSyncStatus("idle"), 4000);
+  }
+
+  async function handleSetSyncCode(code) {
+    setSyncCode(code);
+    try { await storage.set("sync-code", code); } catch (e) {}
+    setShowSyncSetup(false);
+    setTimeout(() => handleSync(), 100);
+  }
 
   async function handleForgotPin() {
     try {
@@ -414,7 +498,7 @@ export default function CRMPaysagiste() {
         }
       `}</style>
 
-      <Sidebar view={view} setView={setView} className="no-print" />
+      <Sidebar view={view} setView={setView} className="no-print" onSync={handleSync} syncStatus={syncStatus} hasSyncCode={!!syncCode} />
 
       <main style={{ flex: 1, minWidth: 0, padding: "32px 28px 90px", maxWidth: 980, margin: "0 auto", width: "100%" }}>
         {view.page === "dashboard" && (
@@ -480,16 +564,32 @@ export default function CRMPaysagiste() {
       {showAIImport && (
         <AIImportModal onClose={() => setShowAIImport(false)} onExtracted={handleExtracted} />
       )}
+      {showSyncSetup && (
+        <SyncSetupModal
+          existingCode={syncCode}
+          error={syncError}
+          onClose={() => setShowSyncSetup(false)}
+          onSave={handleSetSyncCode}
+        />
+      )}
     </div>
   );
 }
 
-function Sidebar({ view, setView }) {
+function Sidebar({ view, setView, onSync, syncStatus, hasSyncCode }) {
   const items = [
     { key: "dashboard", label: "Tableau de bord" },
     { key: "clients", label: "Clients" },
     { key: "tasks", label: "Tâches" },
   ];
+  const syncLabel = {
+    idle: hasSyncCode ? "Synchroniser" : "Configurer la synchro",
+    syncing: "Synchronisation…",
+    pushed: "✓ Envoyé",
+    pulled: "✓ Récupéré",
+    error: "Erreur — réessayer",
+  }[syncStatus] || "Synchroniser";
+
   return (
     <aside className="sidebar" style={{
       width: 220, background: "#25332A", color: "#EFEDE2", padding: "28px 20px",
@@ -516,10 +616,23 @@ function Sidebar({ view, setView }) {
           {it.label}
         </button>
       ))}
+      <button
+        className="nav-item"
+        onClick={onSync}
+        disabled={syncStatus === "syncing"}
+        style={{
+          textAlign: "left", background: "transparent", border: "1px solid #3A4B3D", color: "#B7C9AC",
+          padding: "10px 12px", borderRadius: 6, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13,
+          cursor: syncStatus === "syncing" ? "default" : "pointer", marginTop: 14,
+          opacity: syncStatus === "syncing" ? 0.7 : 1,
+        }}
+      >
+        {syncLabel}
+      </button>
       <div style={{ marginTop: "auto", fontSize: 11.5, color: "#8B9A87", paddingLeft: 4, lineHeight: 1.5 }}>
         Carnet de chantier
         <br />
-        13 juillet 2026
+        {formatDateLong(getTodayIso())}
       </div>
     </aside>
   );
@@ -1254,7 +1367,7 @@ function AIImportModal({ onClose, onExtracted }) {
 }
 
 function TaskModal({ clients, onClose, onSave }) {
-  const [form, setForm] = useState({ title: "", clientId: clients[0]?.id || "", due: "2026-07-14", startTime: "", endTime: "" });
+  const [form, setForm] = useState({ title: "", clientId: clients[0]?.id || "", due: getTodayIso(), startTime: "", endTime: "" });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   return (
     <ModalShell title="Nouvelle tâche" onClose={onClose}>
@@ -1278,6 +1391,71 @@ function TaskModal({ clients, onClose, onSave }) {
       </div>
       <PrimaryButton style={{ width: "100%", justifyContent: "center" }} onClick={() => form.title.trim() && onSave(form)}>
         Ajouter la tâche
+      </PrimaryButton>
+    </ModalShell>
+  );
+}
+
+function SyncSetupModal({ existingCode, error, onClose, onSave }) {
+  const [code, setCode] = useState(existingCode || "");
+  const [confirmCode, setConfirmCode] = useState("");
+  const isFirstTime = !existingCode;
+
+  function submit() {
+    if (code.trim().length < 6) return;
+    if (isFirstTime && code !== confirmCode) return;
+    onSave(code.trim());
+  }
+
+  return (
+    <ModalShell title="Synchroniser entre appareils" onClose={onClose}>
+      <div style={{
+        background: "#F7F5EC", border: "1px solid #DCD8C8", borderRadius: 6, padding: "9px 11px",
+        fontSize: 12.5, color: "#5A5347", marginBottom: 14, lineHeight: 1.5,
+      }}>
+        Choisis une phrase secrète connue seulement de tes appareils (au moins 6 caractères).
+        Elle chiffre tes données avant l'envoi — le serveur ne les voit jamais en clair.
+        Utilise la <strong>même phrase</strong> sur ton téléphone et ton ordinateur.
+      </div>
+
+      <label style={labelStyle}>Code de synchronisation</label>
+      <input
+        type="password"
+        style={inputStyle}
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        placeholder="Une phrase que tu retiendras"
+      />
+
+      {isFirstTime && (
+        <>
+          <label style={labelStyle}>Confirme le code</label>
+          <input
+            type="password"
+            style={inputStyle}
+            value={confirmCode}
+            onChange={(e) => setConfirmCode(e.target.value)}
+            placeholder="Retape la même phrase"
+          />
+        </>
+      )}
+
+      {code.trim().length > 0 && code.trim().length < 6 && (
+        <div style={{ fontSize: 12.5, color: "#B5473F", marginBottom: 10 }}>
+          Au moins 6 caractères.
+        </div>
+      )}
+      {isFirstTime && confirmCode.length > 0 && confirmCode !== code && (
+        <div style={{ fontSize: 12.5, color: "#B5473F", marginBottom: 10 }}>
+          Les deux codes ne correspondent pas.
+        </div>
+      )}
+      {error && (
+        <div style={{ fontSize: 12.5, color: "#B5473F", marginBottom: 10 }}>{error}</div>
+      )}
+
+      <PrimaryButton style={{ width: "100%", justifyContent: "center" }} onClick={submit}>
+        Enregistrer et synchroniser
       </PrimaryButton>
     </ModalShell>
   );

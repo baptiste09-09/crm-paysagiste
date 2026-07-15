@@ -1,13 +1,58 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import fs from "fs";
+import path from "path";
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
 
 const PORT = process.env.PORT || 3001;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+// ---- Stockage de sync : simple fichier JSON local. ----
+// Le serveur ne voit que des identifiants opaques (hash du code) et des blobs
+// chiffrés — jamais le code de synchro en clair, jamais les données en clair.
+// ⚠️ Sur Render (plan gratuit), le disque n'est pas garanti persistant entre
+// redéploiements. Pour un usage sérieux, remplacer par une vraie base de données.
+const SYNC_STORE_PATH = path.join(process.cwd(), "sync-store.json");
+
+function readSyncStore() {
+  try {
+    return JSON.parse(fs.readFileSync(SYNC_STORE_PATH, "utf8"));
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeSyncStore(store) {
+  try {
+    fs.writeFileSync(SYNC_STORE_PATH, JSON.stringify(store));
+  } catch (e) {
+    console.error("Erreur écriture sync-store:", e);
+  }
+}
+
+app.post("/api/sync/push", (req, res) => {
+  const { keyId, saltB64, blob, lastModified } = req.body || {};
+  if (!keyId || !blob || !saltB64) {
+    return res.status(400).json({ error: "Requête invalide" });
+  }
+  const store = readSyncStore();
+  store[keyId] = { saltB64, blob, lastModified: lastModified || Date.now() };
+  writeSyncStore(store);
+  res.json({ ok: true, lastModified: store[keyId].lastModified });
+});
+
+app.get("/api/sync/pull", (req, res) => {
+  const { keyId } = req.query;
+  if (!keyId) return res.status(400).json({ error: "keyId manquant" });
+  const store = readSyncStore();
+  const entry = store[keyId];
+  if (!entry) return res.status(404).json({ error: "Aucune donnée synchronisée pour ce code" });
+  res.json(entry);
+});
 
 const EXTRACTION_SYSTEM_PROMPT = `Tu extrais des informations client à partir d'un email reçu par une entreprise de paysagiste.
 Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balises markdown, au format exact suivant :

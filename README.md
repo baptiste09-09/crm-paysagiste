@@ -75,6 +75,30 @@ Puis :
 
 Détails complets dans `DEPLOY_GITHUB.md` (fourni séparément).
 
+## Synchroniser entre plusieurs appareils
+
+Un bouton **"Synchroniser"** est disponible dans le menu latéral.
+
+1. La première fois, choisis une **phrase secrète** (6 caractères min.) — la même sur
+   tous tes appareils (téléphone, ordinateur...).
+2. Clique "Synchroniser" sur un appareil : ça envoie tes données (chiffrées avec
+   cette phrase) vers le backend.
+3. Sur l'autre appareil, configure la **même phrase**, puis clique "Synchroniser" :
+   comme les données distantes sont plus récentes, l'app te propose de les récupérer.
+4. Ensuite, clique "Synchroniser" après chaque session pour garder les deux appareils à jour.
+
+**Comment ça marche :** le serveur ne stocke qu'un blob chiffré, indexé par un hash
+de ta phrase secrète — il ne voit jamais tes données en clair, ni la phrase elle-même.
+La synchro compare simplement "quel appareil a été modifié le plus récemment" :
+pas de fusion automatique intelligente. Si tu modifies les deux appareils sans
+synchroniser entre les deux, les modifications les plus anciennes seront écrasées.
+→ Prends l'habitude de synchroniser avant et après chaque session.
+
+⚠️ Sur le plan gratuit de Render, le fichier de stockage de synchro n'est pas
+garanti persistant sur le long terme (peut être remis à zéro lors d'un redéploiement).
+Pour un usage sérieux et durable, remplacer `server/sync-store.json` par une vraie
+base de données (Postgres, Redis, etc.).
+
 ## Limites connues
 
 - Le stockage utilise `localStorage` (limite ~5-10 Mo selon les navigateurs). Pour un usage
