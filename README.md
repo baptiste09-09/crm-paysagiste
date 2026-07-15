@@ -1,0 +1,67 @@
+# Carnet Paysagiste — app autonome
+
+Ancien artefact Claude.ai converti en vraie app React (Vite) + petit backend Express.
+
+## Ce qui a changé par rapport au fichier original
+
+- `window.storage` → remplacé par `src/storage.js` (localStorage, même interface `get/set/delete`).
+- L'appel direct à `api.anthropic.com` depuis le navigateur → supprimé. La clé API n'a plus
+  aucune raison d'exister côté client. Le frontend appelle désormais `/api/extract-client`,
+  et c'est `server/index.js` qui détient la clé et interroge Anthropic.
+- Bugs de code PIN (fermeture React périmée sur la validation à 6 chiffres, écran bloqué
+  après "Code oublié") corrigés.
+- `loadData()` : la lecture de `clients` et `tasks` est maintenant isolée clé par clé, une
+  erreur sur l'une n'efface plus les données correctement chargées de l'autre.
+- Dates codées en dur ("2026-07-13") remplacées par la date réelle du jour (`src/utils/date.js`).
+- Le calendrier mensuel démarre sur le mois courant et se navigue (avant fixé sur juillet 2026).
+- `formatDate` ne plante plus sur une valeur vide.
+
+## Installation
+
+Deux parties à installer séparément : le frontend (racine) et le backend (`server/`).
+
+```bash
+# 1. Frontend
+npm install
+
+# 2. Backend
+cd server
+npm install
+cp .env.example .env
+# puis ouvre server/.env et colle ta clé Anthropic (ANTHROPIC_API_KEY=...)
+cd ..
+```
+
+## Lancer en développement
+
+Il faut deux terminaux ouverts en parallèle :
+
+```bash
+# Terminal 1 — backend (port 3001)
+cd server
+npm start
+
+# Terminal 2 — frontend (port 5173)
+npm run dev
+```
+
+Ouvre http://localhost:5173 — Vite redirige automatiquement les appels `/api/*` vers le
+backend (voir `vite.config.js`).
+
+## Build production
+
+```bash
+npm run build
+```
+
+Génère `dist/`. Pour la mise en prod, sers ces fichiers statiques (ex. Nginx, Vercel, Netlify)
+et déploie `server/` séparément (ou en tant que fonction serverless) avec `ANTHROPIC_API_KEY`
+définie dans les variables d'environnement de l'hébergeur — jamais dans le code du frontend.
+
+## Limites connues
+
+- Le stockage utilise `localStorage` (limite ~5-10 Mo selon les navigateurs). Pour un usage
+  intensif ou beaucoup de clients/photos, migrer vers IndexedDB serait plus robuste.
+- Le PIN chiffre les données uniquement sur l'appareil : s'il est oublié, les données
+  existantes ne sont pas récupérables (comportement voulu, pas un bug).
+- L'import IA ne lit que du texte collé ou des fichiers `.txt` ; le PDF n'est pas branché.
