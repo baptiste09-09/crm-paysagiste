@@ -79,20 +79,28 @@ Détails complets dans `DEPLOY_GITHUB.md` (fourni séparément).
 
 Un bouton **"Synchroniser"** est disponible dans le menu latéral.
 
-1. La première fois, choisis une **phrase secrète** (6 caractères min.) — la même sur
-   tous tes appareils (téléphone, ordinateur...).
-2. Clique "Synchroniser" sur un appareil : ça envoie tes données (chiffrées avec
-   cette phrase) vers le backend.
-3. Sur l'autre appareil, configure la **même phrase**, puis clique "Synchroniser" :
-   comme les données distantes sont plus récentes, l'app te propose de les récupérer.
-4. Ensuite, clique "Synchroniser" après chaque session pour garder les deux appareils à jour.
+**Appairage (une seule fois) :**
+1. Sur le premier appareil : "Synchroniser" → "Premier appareil : générer un code" → un QR code apparaît.
+2. Sur le second appareil : "Synchroniser" → "Scanner le code d'un autre appareil" → vise le QR
+   avec la caméra (ou saisis le code affiché manuellement si pas de caméra).
+3. C'est tout — le code (aléatoire, jamais un mot de passe à inventer) est enregistré sur les deux appareils.
 
-**Comment ça marche :** le serveur ne stocke qu'un blob chiffré, indexé par un hash
-de ta phrase secrète — il ne voit jamais tes données en clair, ni la phrase elle-même.
-La synchro compare simplement "quel appareil a été modifié le plus récemment" :
-pas de fusion automatique intelligente. Si tu modifies les deux appareils sans
-synchroniser entre les deux, les modifications les plus anciennes seront écrasées.
-→ Prends l'habitude de synchroniser avant et après chaque session.
+**Ensuite, c'est automatique :**
+- Chaque modification est poussée silencieusement vers le serveur quelques secondes après.
+- Chaque appareil vérifie toutes les 20s si l'autre a des données plus récentes ; si oui, un
+  bandeau discret propose "Actualiser" (jamais d'écrasement automatique sans confirmation).
+- Le bouton "Synchroniser" reste utile pour forcer une vérification immédiate.
+
+**Sécurité :** le serveur ne stocke qu'un blob chiffré, indexé par un hash du code — il ne voit
+jamais le code en clair ni tes données. Le code d'appairage se transmet uniquement via QR/saisie
+manuelle entre tes appareils, jamais par le réseau.
+
+**Limite :** pas de fusion intelligente champ par champ — c'est "la version la plus récente gagne"
+au niveau de l'ensemble des données. Une modification faite sur un appareil non synchronisé
+depuis longtemps peut être écrasée si l'autre appareil a modifié entre-temps.
+
+⚠️ Le scan de QR code nécessite HTTPS (ou localhost) pour accéder à la caméra — fonctionne
+automatiquement une fois déployé sur Vercel, ou en local sur `localhost`.
 
 ⚠️ Sur le plan gratuit de Render, le fichier de stockage de synchro n'est pas
 garanti persistant sur le long terme (peut être remis à zéro lors d'un redéploiement).

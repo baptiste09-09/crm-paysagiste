@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Leaf, MapPin, Phone, Mail, Plus, Check, Clock, ChevronLeft, ChevronRight, Search, X, Trash2, Sparkles, Upload, AlertCircle, Download } from "lucide-react";
 import { API_BASE } from "./config";
 import { storage } from "./storage";
 import { deriveKey, encryptJSON, decryptJSON } from "./crypto";
 import { addDays, formatDate, formatDateLong, getTodayIso } from "./utils/date";
 import { pullSync, pushSync } from "./sync";
+import QRCodeDisplay from "./QRCodeDisplay";
+import QRCodeScanner from "./QRCodeScanner";
 
 // ---- Design tokens ----
 // Couleurs : vert sapin (#25332A), mousse (#5B7A52), pierre/argile (#B7A480),
@@ -243,6 +245,7 @@ export default function CRMPaysagiste() {
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | pushed | pulled | error
   const [showSyncSetup, setShowSyncSetup] = useState(false);
   const [syncError, setSyncError] = useState("");
+  const [remoteUpdate, setRemoteUpdate] = useState(null); // { lastModified } | null
 
   useEffect(() => {
     (async () => {
@@ -347,28 +350,12 @@ export default function CRMPaysagiste() {
         // Nos données sont plus récentes (ou aucune donnée distante encore) : on envoie.
         await pushSync(syncCode, { clients, tasks, lastModified });
         setSyncStatus("pushed");
+        setRemoteUpdate(null);
       } else {
-        // Les données distantes sont plus récentes : on demande avant d'écraser l'appareil actuel.
-        const when = new Date(remote.lastModified).toLocaleString("fr-FR");
-        const ok = window.confirm(
-          `Des données plus récentes existent sur un autre appareil (mises à jour le ${when}).\n\n` +
-          `Les récupérer remplacera les données présentes sur CET appareil. Continuer ?`
-        );
-        if (ok) {
-          setClients(remote.data.clients);
-          setTasks(remote.data.tasks);
-          setLastModified(remote.lastModified);
-          if (cryptoKey) {
-            try {
-              await storage.set("clients", await encryptJSON(cryptoKey, remote.data.clients));
-              await storage.set("tasks", await encryptJSON(cryptoKey, remote.data.tasks));
-              await storage.set("last-modified", String(remote.lastModified));
-            } catch (e) {}
-          }
-          setSyncStatus("pulled");
-        } else {
-          setSyncStatus("idle");
-        }
+        // Les données distantes sont plus récentes : on prévient via le bandeau,
+        // jamais d'écrasement silencieux ni de popup bloquante.
+        setRemoteUpdate({ lastModified: remote.lastModified });
+        setSyncStatus("idle");
       }
     } catch (e) {
       setSyncError("La synchronisation a échoué. Vérifie ta connexion et réessaie.");
@@ -377,12 +364,79 @@ export default function CRMPaysagiste() {
     setTimeout(() => setSyncStatus("idle"), 4000);
   }
 
+  async function applyRemoteUpdate() {
+    if (!syncCode) return;
+    setSyncStatus("syncing");
+    try {
+      const remote = await pullSync(syncCode);
+      if (remote) {
+        setClients(remote.data.clients);
+        setTasks(remote.data.tasks);
+        setLastModified(remote.lastModified);
+        if (cryptoKey) {
+          try {
+            await storage.set("clients", await encryptJSON(cryptoKey, remote.data.clients));
+            await storage.set("tasks", await encryptJSON(cryptoKey, remote.data.tasks));
+            await storage.set("last-modified", String(remote.lastModified));
+          } catch (e) {}
+        }
+      }
+      setRemoteUpdate(null);
+      setSyncStatus("pulled");
+    } catch (e) {
+      setSyncStatus("error");
+    }
+    setTimeout(() => setSyncStatus("idle"), 3000);
+  }
+
   async function handleSetSyncCode(code) {
     setSyncCode(code);
     try { await storage.set("sync-code", code); } catch (e) {}
     setShowSyncSetup(false);
     setTimeout(() => handleSync(), 100);
   }
+
+  // ---- Synchro automatique en arrière-plan (aucun clic requis une fois configurée) ----
+  // Un ref tient toujours les dernières valeurs : évite de lire un état périmé
+  // dans les callbacks de setTimeout/setInterval (même piège que le bug du PIN).
+  const latestRef = useRef({ clients, tasks, lastModified, syncCode });
+  useEffect(() => {
+    latestRef.current = { clients, tasks, lastModified, syncCode };
+  }, [clients, tasks, lastModified, syncCode]);
+
+  // Après chaque modification locale, pousse silencieusement vers le serveur
+  // (débouncé de 3s pour ne pas spammer le réseau pendant une saisie rapide).
+  useEffect(() => {
+    if (!syncCode || !cryptoKey || !loaded) return;
+    const timer = setTimeout(() => {
+      pushSync(syncCode, { clients, tasks, lastModified }).catch(() => {
+        // silencieux : on retentera au prochain changement ou à la vérification périodique
+      });
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [clients, tasks, lastModified, syncCode, cryptoKey, loaded]);
+
+  // Vérifie périodiquement si l'autre appareil a poussé des données plus récentes.
+  useEffect(() => {
+    if (!syncCode || !cryptoKey || !loaded) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const { syncCode: code, lastModified: lm } = latestRef.current;
+        if (!code) return;
+        const remote = await pullSync(code);
+        if (cancelled) return;
+        if (remote && remote.lastModified > lm) {
+          setRemoteUpdate({ lastModified: remote.lastModified });
+        }
+      } catch (e) {
+        // silencieux : hors-ligne ou serveur temporairement injoignable
+      }
+    };
+    check();
+    const interval = setInterval(check, 20000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [syncCode, cryptoKey, loaded]);
 
   async function handleForgotPin() {
     try {
@@ -497,6 +551,30 @@ export default function CRMPaysagiste() {
           body, .print-only { background: #fff !important; }
         }
       `}</style>
+
+      {remoteUpdate && (
+        <div style={{
+          position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 200,
+          background: "#25332A", color: "#EFEDE2", padding: "10px 10px 10px 16px", borderRadius: 8,
+          display: "flex", alignItems: "center", gap: 12, fontSize: 13, fontFamily: "'IBM Plex Sans', sans-serif",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.28)", maxWidth: "92vw",
+        }}>
+          <span>Données plus récentes disponibles depuis un autre appareil.</span>
+          <button
+            onClick={applyRemoteUpdate}
+            style={{ background: "#5B7A52", color: "#fff", border: "none", borderRadius: 6, padding: "6px 11px", fontSize: 12.5, cursor: "pointer", flexShrink: 0 }}
+          >
+            Actualiser
+          </button>
+          <button
+            onClick={() => setRemoteUpdate(null)}
+            aria-label="Ignorer"
+            style={{ background: "none", border: "none", color: "#B7C9AC", cursor: "pointer", padding: 4, flexShrink: 0 }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       <Sidebar view={view} setView={setView} className="no-print" onSync={handleSync} syncStatus={syncStatus} hasSyncCode={!!syncCode} />
 
@@ -1396,67 +1474,97 @@ function TaskModal({ clients, onClose, onSave }) {
   );
 }
 
-function SyncSetupModal({ existingCode, error, onClose, onSave }) {
-  const [code, setCode] = useState(existingCode || "");
-  const [confirmCode, setConfirmCode] = useState("");
-  const isFirstTime = !existingCode;
+function ChoiceButton({ children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        textAlign: "left", background: "#F7F5EC", border: "1px solid #DCD8C8", borderRadius: 8,
+        padding: "12px 14px", fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13.5, cursor: "pointer",
+        color: "#25332A", display: "flex", alignItems: "center", gap: 10,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
-  function submit() {
-    if (code.trim().length < 6) return;
-    if (isFirstTime && code !== confirmCode) return;
-    onSave(code.trim());
+function SyncSetupModal({ existingCode, error, onClose, onSave }) {
+  const [mode, setMode] = useState(existingCode ? "manual" : "choose"); // choose | generate | scan | manual
+  const [code, setCode] = useState(existingCode || "");
+  const [manualInput, setManualInput] = useState("");
+
+  function generateCode() {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+    setCode(hex);
+    setMode("generate");
+  }
+
+  function submitManual() {
+    if (manualInput.trim().length < 8) return;
+    onSave(manualInput.trim());
   }
 
   return (
     <ModalShell title="Synchroniser entre appareils" onClose={onClose}>
-      <div style={{
-        background: "#F7F5EC", border: "1px solid #DCD8C8", borderRadius: 6, padding: "9px 11px",
-        fontSize: 12.5, color: "#5A5347", marginBottom: 14, lineHeight: 1.5,
-      }}>
-        Choisis une phrase secrète connue seulement de tes appareils (au moins 6 caractères).
-        Elle chiffre tes données avant l'envoi — le serveur ne les voit jamais en clair.
-        Utilise la <strong>même phrase</strong> sur ton téléphone et ton ordinateur.
-      </div>
+      {mode === "choose" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 12.5, color: "#5A5347", lineHeight: 1.5, marginBottom: 4 }}>
+            Relie cet appareil à un autre pour partager tes clients et tâches. Un code aléatoire
+            (généré ici, jamais un mot de passe à inventer) chiffre tes données — le serveur ne les
+            voit jamais en clair.
+          </div>
+          <ChoiceButton onClick={generateCode}>
+            <Sparkles size={16} /> Premier appareil : générer un code
+          </ChoiceButton>
+          <ChoiceButton onClick={() => setMode("scan")}>
+            <Upload size={16} /> Scanner le code d'un autre appareil
+          </ChoiceButton>
+          <ChoiceButton onClick={() => setMode("manual")}>
+            <Search size={16} /> Saisir le code manuellement
+          </ChoiceButton>
+        </div>
+      )}
 
-      <label style={labelStyle}>Code de synchronisation</label>
-      <input
-        type="password"
-        style={inputStyle}
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-        placeholder="Une phrase que tu retiendras"
-      />
+      {mode === "generate" && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 12.5, color: "#5A5347", textAlign: "center", lineHeight: 1.5 }}>
+            Sur ton autre appareil, ouvre "Synchroniser" → "Scanner le code d'un autre appareil",
+            et vise ce QR code avec la caméra.
+          </div>
+          <QRCodeDisplay value={code} size={200} />
+          <div style={{
+            fontSize: 10.5, fontFamily: "'IBM Plex Mono', monospace", color: "#8B8378",
+            wordBreak: "break-all", textAlign: "center", padding: "0 8px",
+          }}>
+            Pas de caméra sur l'autre appareil ? Saisis ce code manuellement : {code}
+          </div>
+          <PrimaryButton style={{ width: "100%", justifyContent: "center" }} onClick={() => onSave(code)}>
+            C'est scanné sur l'autre appareil, continuer
+          </PrimaryButton>
+        </div>
+      )}
 
-      {isFirstTime && (
-        <>
-          <label style={labelStyle}>Confirme le code</label>
+      {mode === "scan" && (
+        <QRCodeScanner onScan={(value) => onSave(value)} onCancel={() => setMode("choose")} />
+      )}
+
+      {mode === "manual" && (
+        <div>
+          <label style={labelStyle}>Code de synchronisation</label>
           <input
-            type="password"
             style={inputStyle}
-            value={confirmCode}
-            onChange={(e) => setConfirmCode(e.target.value)}
-            placeholder="Retape la même phrase"
+            value={manualInput}
+            onChange={(e) => setManualInput(e.target.value)}
+            placeholder="Colle ou tape le code généré sur l'autre appareil"
           />
-        </>
-      )}
-
-      {code.trim().length > 0 && code.trim().length < 6 && (
-        <div style={{ fontSize: 12.5, color: "#B5473F", marginBottom: 10 }}>
-          Au moins 6 caractères.
+          {error && <div style={{ fontSize: 12.5, color: "#B5473F", marginBottom: 10 }}>{error}</div>}
+          <PrimaryButton style={{ width: "100%", justifyContent: "center" }} onClick={submitManual}>
+            Enregistrer et synchroniser
+          </PrimaryButton>
         </div>
       )}
-      {isFirstTime && confirmCode.length > 0 && confirmCode !== code && (
-        <div style={{ fontSize: 12.5, color: "#B5473F", marginBottom: 10 }}>
-          Les deux codes ne correspondent pas.
-        </div>
-      )}
-      {error && (
-        <div style={{ fontSize: 12.5, color: "#B5473F", marginBottom: 10 }}>{error}</div>
-      )}
-
-      <PrimaryButton style={{ width: "100%", justifyContent: "center" }} onClick={submit}>
-        Enregistrer et synchroniser
-      </PrimaryButton>
     </ModalShell>
   );
 }
