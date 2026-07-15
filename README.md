@@ -58,6 +58,23 @@ Génère `dist/`. Pour la mise en prod, sers ces fichiers statiques (ex. Nginx, 
 et déploie `server/` séparément (ou en tant que fonction serverless) avec `ANTHROPIC_API_KEY`
 définie dans les variables d'environnement de l'hébergeur — jamais dans le code du frontend.
 
+## Déploiement (GitHub + Vercel + Render)
+
+Le dépôt git est déjà initialisé avec un premier commit. Pour déployer :
+
+```bash
+git remote add origin https://github.com/TON-PSEUDO/crm-paysagiste.git
+git push -u origin main
+```
+
+Puis :
+- **Backend** → importe le repo sur [Render](https://render.com), Root Directory `server`,
+  Build `npm install`, Start `npm start`, variable d'env `ANTHROPIC_API_KEY`.
+- **Frontend** → importe le repo sur [Vercel](https://vercel.com), Framework `Vite`,
+  variable d'env `VITE_API_URL` = URL Render + `/api`.
+
+Détails complets dans `DEPLOY_GITHUB.md` (fourni séparément).
+
 ## Limites connues
 
 - Le stockage utilise `localStorage` (limite ~5-10 Mo selon les navigateurs). Pour un usage
