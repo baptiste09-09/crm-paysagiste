@@ -18,9 +18,10 @@ transcrit partent vers l'API Claude.
 ## Comment ça marche
 
 ```
-Rushs (dossier du Mac, disque externe ou envoi depuis le téléphone)
+Rushs vidéo + voix off (dossier du Mac, disque externe ou envoi depuis le téléphone)
   │  1. FFmpeg lit chaque fichier UNE fois → proxy 960p + son 16 kHz + 1 image/s + coupes de plans
-  │  2. Whisper transcrit la parole sur le Mac (mlx-whisper, GPU de la puce M), mot par mot
+  │  2. Whisper transcrit la parole sur le Mac (mlx-whisper, GPU de la puce M), mot par mot,
+  │     celle filmée sur le chantier comme celle des voix off enregistrées à part
   │  3. Claude décrit chaque plan (3 vignettes) : contenu, tags, qualité, intérêt, position du sujet
   ▼
 Catalogue (plans décrits + paroles horodatées) + ton brief
@@ -68,16 +69,34 @@ cp .env.example .env   # puis renseigner la clé
 
 ## Utilisation
 
-1. **Rushs** : *Dossier du Mac* (disque externe accepté, sous-dossiers inclus) ou *Envoyer depuis cet appareil*.
+1. **Rushs** : *Dossier du Mac* (disque externe accepté, sous-dossiers inclus) ou *Envoyer vidéos / voix off*.
+   Les fichiers son (.m4a, .mp3, .wav…) sont traités comme des voix off (V01, V02…).
    Puis *Analyser*.
 2. **Brief** : chantier, ville, ton, appel à l'action, nombre de clips, durée, consignes.
 3. **Clips** : *Proposer N montages*. Pour chaque clip : aperçu, réglage des segments (± 0,2 s),
    son on/off, plan d'illustration par-dessus la parole, recadrage gauche/droite ou image entière
    sur fond flouté, textes. Puis *Rendu final* et *Télécharger*.
 
-Musique : dépose des fichiers libres de droits dans `~/VideoAgent/musique` ou via le brief.
-Sur un compte professionnel, Instagram et TikTok limitent l'accès aux musiques commerciales :
-les sons tendance s'ajoutent dans l'appli au moment de publier.
+### Ta voix : sur le chantier ou en voix off
+
+- **Parole filmée** : l'agent garde les meilleures phrases, coupe les hésitations et peut couvrir ta voix
+  avec des plans de chantier pour garder du mouvement à l'écran.
+- **Voix off** (dictaphone du S24, fichier son) : l'agent pose les images sur ta voix et change de plan
+  dans les pauses, sans couper un mot. Chaque passage de voix off a forcément une image ; si l'agent
+  n'en a pas choisi, il prend le meilleur plan disponible, que tu peux changer.
+- Les deux peuvent se mélanger dans un même clip. Les sous-titres suivent les deux.
+- Conseil voix off : enregistre au calme (la voiture fait une bonne cabine), téléphone à 15–20 cm,
+  une idée par fichier. Laisse une petite pause entre les phrases : c'est là que l'agent coupe.
+
+### Musique
+
+Par défaut, **l'export n'a pas de musique** : tu ajoutes le son dans TikTok ou Instagram au moment de
+publier. Les passages sans voix sont alors silencieux dans l'export et la musique de l'appli les remplit.
+Dans l'éditeur de l'appli, baisse le curseur de la musique par rapport au son d'origine pour que ta voix
+reste compréhensible. Sur un compte professionnel, le catalogue de musiques commerciales est limité.
+
+Option : une musique libre de droits intégrée par l'agent (choix par clip, fichiers dans
+`~/VideoAgent/musique`). Elle est alors baissée automatiquement quand tu parles et remonte dans les pauses.
 
 ## Réglages conseillés pour le Galaxy S24 Ultra
 
@@ -116,7 +135,8 @@ Dans un conteneur Linux (FFmpeg 6.1, sans GPU Apple, sans clé API ni modèle Wh
 analyse d'un fichier 4K de 23,7 Go en 201 s sur 4 cœurs CPU (RAM max : 89 Mo pour l'app,
 441 Mo pour FFmpeg) puis rendu d'un clip depuis ce fichier (1,6 Go de RAM max), chaîne analyse → plan → rendu sur rushs de synthèse
 (Claude et Whisper simulés), sortie 1080×1920 à la durée exacte prévue, −15 LUFS avec musique,
-interface pilotée en format téléphone, envoi interrompu puis repris (fichier identique à l'octet).
+interface pilotée en format téléphone, envoi interrompu puis repris (fichier identique à l'octet),
+voix off : découpe sous plusieurs images sans mot répété ni perdu, image ajoutée automatiquement si absente.
 Non vérifié ici, à valider au premier lancement sur le Mac : mlx-whisper, l'encodeur matériel Apple,
 et les vraies réponses de Claude.
 

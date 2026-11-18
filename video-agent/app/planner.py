@@ -28,6 +28,13 @@ Format :
 - overlay : liste vide, ou un seul plan d'illustration affiché PAR-DESSUS pendant toute la durée du segment
   (le son reste celui du segment). C'est la technique à utiliser pendant la parole.
   Donne son source_id et son start ; la durée est celle du segment, vérifie que le plan est assez long.
+- Voix off : les rushs "Voix off" (V01, V02...) sont du son seul, sans image. Tout segment pris dans une
+  voix off a audio = "garder" et DOIT avoir un overlay issu d'un rush vidéo. Pour changer d'image pendant
+  une longue phrase, découpe la voix off en segments consécutifs (la fin de l'un = le début du suivant,
+  dans une pause entre deux mots), chacun avec un overlay différent. Voix off et parole filmée sur le
+  chantier peuvent se mélanger dans un même clip.
+- La musique sera ajoutée dans TikTok/Instagram : ne compte pas dessus pour combler un silence de plus
+  de 3 s sans son utile.
 - cadrage : "recadrer" (plein écran vertical, par défaut) ou "entier" (image entière sur fond flouté,
   pour les plans larges horizontaux où le recadrage perdrait l'essentiel, comme un drone ou un avant/après).
 - accroche : texte affiché à l'écran au début, 7 mots maximum, sans hashtag.
@@ -113,6 +120,12 @@ def catalog(project: dict) -> str:
             continue
         tr = load_transcript(project["id"], src["id"])
         info = src["info"]
+        if not info.get("has_video", True):
+            lines.append(f"\n## Voix off {src['label']} — {src['name']} — {info['duration']:.1f} s — son seul, sans image")
+            phrases = _phrases(tr)
+            lines += ["Paroles horodatées :"] + [f"[{a:.2f}–{b:.2f}] {t}" for a, b, t in phrases] \
+                if phrases else ["(aucune parole détectée)"]
+            continue
         lines.append(f"\n## Rush {src['label']} — {src['name']} — {info['duration']:.1f} s — "
                      f"{info['orientation']} — parole : {'oui' if tr.get('segments') else 'non'}")
         lines.append("Plans (id | début–fin | qualité q, intérêt i | sujet_x | tags | description) :")
@@ -157,6 +170,23 @@ def _snap(start: float, end: float, words: list[dict]) -> tuple[float, float]:
     return round(new_start, 3), round(new_end, 3)
 
 
+def _cut_point(t: float, words: list[dict], gap: float = 0.6) -> tuple[float, float]:
+    """Coupe entre deux segments consécutifs d'un même son (voix off découpée sous plusieurs images).
+    Renvoie (fin du segment précédent, début du suivant) : dans la pause la plus proche, jamais
+    au milieu d'un mot, et sans répéter ni perdre de mot. Une longue pause est raccourcie."""
+    best = None
+    for w1, w2 in zip(words, words[1:]):
+        mid = (w1["e"] + w2["s"]) / 2
+        if best is None or abs(mid - t) < abs(best[0] - t):
+            best = (mid, w1, w2)
+    if best is None or abs(best[0] - t) > 1.5:
+        return t, t
+    mid, w1, w2 = best
+    if w2["s"] - w1["e"] > gap:
+        return round(w1["e"] + 0.15, 3), round(w2["s"] - 0.12, 3)
+    return round(mid, 3), round(mid, 3)
+
+
 def _tighten(seg: dict, words: list[dict], gap: float = 0.6) -> list[dict]:
     """Retire les silences > gap à l'intérieur d'un segment parlé (jump cuts)."""
     inside = [w for w in words if w["s"] >= seg["start"] - 0.01 and w["e"] <= seg["end"] + 0.01]
@@ -187,6 +217,28 @@ def _shot_at(src: dict, t: float) -> dict | None:
     return None
 
 
+def by_label_id(by_label: dict, sid: str) -> dict:
+    return next(s for s in by_label.values() if s["id"] == sid)
+
+
+def _best_broll(sources, length: float, used: set) -> dict | None:
+    """Plan d'illustration le plus intéressant, pas encore utilisé et assez long."""
+    candidates = []
+    for src in sources:
+        if not src["info"].get("has_video", True) or src["info"]["duration"] < length:
+            continue
+        for sh in src.get("shots", []):
+            if "inutilisable" in sh.get("tags", []):
+                continue
+            start = min(sh["start"], src["info"]["duration"] - length)
+            fresh = (src["id"], round(start)) not in used
+            candidates.append((fresh, sh.get("interet", 3) + sh.get("qualite", 3), -sh["start"], src["id"], start))
+    if not candidates:
+        return None
+    best = max(candidates)
+    return {"source": best[3], "start": round(best[4], 3)}
+
+
 def clean_clip(project: dict, raw: dict, tighten: bool = True) -> dict:
     by_label = {s["label"]: s for s in project["sources"] if s.get("status") == "pret"}
     words_cache: dict[str, list] = {}
@@ -197,34 +249,57 @@ def clean_clip(project: dict, raw: dict, tighten: bool = True) -> dict:
             words_cache[src["id"]] = [w for seg in tr.get("segments", []) for w in seg["words"]]
         return words_cache[src["id"]]
 
-    segments = []
-    for s in raw["segments"]:
-        src = by_label.get(s["source_id"].split("-")[0])
+    raws = raw["segments"]
+    label = lambda s: s["source_id"].split("-")[0]  # noqa: E731
+    # segments consécutifs pris dans le même son (ex. voix off sous plusieurs images) : coupe commune
+    shared = {}
+    for k in range(1, len(raws)):
+        a, b = raws[k - 1], raws[k]
+        src = by_label.get(label(b))
+        if src and label(a) == label(b) and abs(float(a["end"]) - float(b["start"])) < 0.05:
+            shared[k] = _cut_point(float(b["start"]), words(src))
+
+    segments, used = [], set()
+    for k, s in enumerate(raws):
+        src = by_label.get(label(s))
         if not src:
             continue
+        is_voice = not src["info"].get("has_video", True)
         dur_max = src["info"]["duration"]
         start, end = max(0.0, float(s["start"])), min(dur_max, float(s["end"]))
         if end - start < 0.4:
             continue
-        keep = s["audio"] == "garder" and src["info"]["has_audio"]
+        keep = (s["audio"] == "garder" or is_voice) and src["info"]["has_audio"]
         if keep:
             start, end = _snap(start, end, words(src))
+            if k in shared:
+                start = shared[k][1]
+            if k + 1 in shared:
+                end = shared[k + 1][0]
             start, end = max(0.0, start), min(dur_max, end)
+            if end - start < 0.3:
+                continue
         seg = {"id": store.new_id("g"), "source": src["id"], "start": round(start, 3), "end": round(end, 3),
                "audio": "keep" if keep else "mute",
                "framing": "fit" if s.get("cadrage") == "entier" else "crop",
                "overlay": None, "why": s.get("raison", "")}
         visual_src, visual_t = src, start
+        length = end - start
         for ov in s.get("overlay", [])[:1]:
             osrc = by_label.get(ov["source_id"].split("-")[0])
-            if not osrc:
-                continue
-            length = end - start
-            if osrc["info"]["duration"] < length:
+            if not osrc or not osrc["info"].get("has_video", True) or osrc["info"]["duration"] < length:
                 continue
             ostart = min(max(0.0, float(ov["start"])), osrc["info"]["duration"] - length)
             seg["overlay"] = {"source": osrc["id"], "start": round(ostart, 3)}
             visual_src, visual_t = osrc, ostart
+        if is_voice and not seg["overlay"]:  # une voix off sans image : on prend le meilleur plan libre
+            pick = _best_broll(by_label.values(), length, used)
+            if not pick:
+                continue
+            seg["overlay"] = pick
+            visual_src, visual_t = by_label_id(by_label, pick["source"]), pick["start"]
+        if seg["overlay"]:
+            used.add((seg["overlay"]["source"], round(seg["overlay"]["start"])))
         shot = _shot_at(visual_src, visual_t + 0.5)
         seg["crop_x"] = shot.get("sujet_x", 0.5) if shot else 0.5
         if keep and tighten:

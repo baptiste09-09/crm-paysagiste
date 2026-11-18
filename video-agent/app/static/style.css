@@ -93,6 +93,7 @@ label.field > span { display: block; font-size: .85rem; color: var(--muted); mar
 
 .src { display: flex; gap: 12px; align-items: flex-start; }
 .src .thumb { width: 96px; height: 54px; object-fit: cover; border-radius: 6px; background: var(--line); flex: none; }
+.src .thumb.voice { display: flex; align-items: center; justify-content: center; font-size: 26px; }
 .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 10px; }
 .shot { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); cursor: default; text-align: left; padding: 0; display: block; width: 100%; min-height: 0; }
 .shot.pick { cursor: pointer; }

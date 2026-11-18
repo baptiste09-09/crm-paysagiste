@@ -41,6 +41,8 @@ def _segment_cmd(seg: dict, sources: dict, out: Path, ass: str | None) -> list[s
         vis, vstart = sources[seg["overlay"]["source"]], seg["overlay"]["start"]
     else:
         vis, vstart = main, seg["start"]
+    if not vis["info"].get("has_video", True):
+        raise ValueError(f"Le segment {main['label']} {seg['start']:.1f}s n'a pas d'image (voix off sans illustration)")
 
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
            *media.hwaccel_args(), "-ss", f"{vstart:.3f}", "-t", f"{dur + 0.5:.3f}", "-i", vis["path"]]
@@ -127,13 +129,19 @@ def render_clip(project: dict, clip: dict, on_progress=None) -> Path:
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
            "-f", "concat", "-safe", "0", "-i", "list.txt"]
     if music and music.exists():
-        mvol = 0.22 if any_voice else 0.9
         cmd += ["-stream_loop", "-1", "-i", str(music)]
-        graph = (f"[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,asplit=2[vo][sc];"
-                 f"[1:a]aresample=48000,aformat=channel_layouts=stereo,volume={mvol},"
-                 f"afade=t=in:d=0.5,afade=t=out:st={max(0, total - 1.5):.2f}:d=1.5[m];"
-                 f"[m][sc]sidechaincompress=threshold=0.03:ratio=10:attack=15:release=350[md];"
-                 f"[vo][md]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.89[a]")
+        fades = f"afade=t=in:d=0.5,afade=t=out:st={max(0, total - 1.5):.2f}:d=1.5"
+        if any_voice:
+            # musique ramenée à un niveau fixe, puis baissée automatiquement quand la voix parle
+            graph = (f"[0:a]loudnorm=I={config.TARGET_LUFS}:TP=-1.5:LRA=11,aresample=48000,asplit=2[vo][sc];"
+                     f"[1:a]aresample=48000,aformat=channel_layouts=stereo,loudnorm=I=-21:TP=-3,"
+                     f"aresample=48000,{fades}[m];"
+                     f"[m][sc]sidechaincompress=threshold=0.02:ratio=6:attack=30:release=500[md];"
+                     f"[vo][md]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.89[a]")
+        else:
+            graph = (f"[1:a]aresample=48000,aformat=channel_layouts=stereo,"
+                     f"loudnorm=I={config.TARGET_LUFS}:TP=-1.5,aresample=48000,{fades}[m];"
+                     f"[0:a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.89[a]")
     else:
         graph = f"[0:a]loudnorm=I={config.TARGET_LUFS}:TP=-1.5:LRA=11,aresample=48000[a]"
     cmd += ["-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy",

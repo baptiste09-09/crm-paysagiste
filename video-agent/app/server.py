@@ -122,15 +122,18 @@ def save_brief(pid: str, payload: dict = Body(...)):
 
 # ------------------------------------------------------------------ rushs
 
+MEDIA_EXTS = config.VIDEO_EXTS | config.AUDIO_EXTS  # vidéos + voix off (mémos vocaux)
+
+
 def _scan(path: Path) -> list[Path]:
     if path.is_file():
-        return [path] if path.suffix.lower() in config.VIDEO_EXTS else []
+        return [path] if path.suffix.lower() in MEDIA_EXTS else []
     files = []
     for root, dirs, names in os.walk(path):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         for n in names:
             # "._xxx" = métadonnées macOS sur disques exFAT, pas des vidéos
-            if not n.startswith(".") and Path(n).suffix.lower() in config.VIDEO_EXTS:
+            if not n.startswith(".") and Path(n).suffix.lower() in MEDIA_EXTS:
                 files.append(Path(root) / n)
     return sorted(files)
 
@@ -138,13 +141,13 @@ def _scan(path: Path) -> list[Path]:
 def _register(pid: str, files: list[Path]) -> int:
     def fn(p):
         known = {s["path"] for s in p["sources"]}
-        num = max([int(s["label"][1:]) for s in p["sources"]] or [0])
         added = 0
         for f in files:
             if str(f) in known:
                 continue
-            num += 1
-            p["sources"].append({"id": store.new_id("s"), "label": f"R{num:02d}", "path": str(f),
+            prefix = "V" if f.suffix.lower() in config.AUDIO_EXTS else "R"  # V = voix off
+            num = max([int(s["label"][1:]) for s in p["sources"] if s["label"][0] == prefix] or [0]) + 1
+            p["sources"].append({"id": store.new_id("s"), "label": f"{prefix}{num:02d}", "path": str(f),
                                  "name": f.name, "size": f.stat().st_size, "status": "en_attente",
                                  "info": None, "shots": []})
             added += 1
@@ -164,7 +167,7 @@ def browse(path: str = ""):
                 continue
             if entry.is_dir():
                 dirs.append({"name": entry.name, "path": str(entry)})
-            elif entry.suffix.lower() in config.VIDEO_EXTS:
+            elif entry.suffix.lower() in MEDIA_EXTS:
                 videos += 1
                 size += entry.stat().st_size
     except PermissionError:
@@ -190,7 +193,7 @@ def add_sources(pid: str, payload: dict = Body(...)):
             raise HTTPException(400, f"Introuvable : {raw}")
         files += _scan(p)
     if not files:
-        raise HTTPException(400, "Aucune vidéo trouvée à cet endroit")
+        raise HTTPException(400, "Aucune vidéo ni voix off trouvée à cet endroit")
     return {"added": _register(pid, files), "found": len(files)}
 
 
@@ -224,8 +227,8 @@ def _upload_target(pid: str | None, name: str) -> Path:
         if Path(name).suffix.lower() not in config.AUDIO_EXTS:
             raise HTTPException(400, "Format audio non pris en charge")
         return config.MUSIC_DIR / _safe_name(name)
-    if Path(name).suffix.lower() not in config.VIDEO_EXTS:
-        raise HTTPException(400, "Format vidéo non pris en charge")
+    if Path(name).suffix.lower() not in MEDIA_EXTS:
+        raise HTTPException(400, "Format non pris en charge (vidéo ou voix off attendue)")
     d = store.project_dir(pid) / "uploads"
     d.mkdir(parents=True, exist_ok=True)
     return d / _safe_name(name)
@@ -309,21 +312,24 @@ def _validate_segments(project: dict, segments: list[dict]) -> list[dict]:
         start, end = max(0.0, float(s["start"])), min(dur, float(s["end"]))
         if end - start < 0.2:
             raise HTTPException(400, f"Segment trop court ({src['label']} {start:.1f}s)")
+        is_voice = not src["info"].get("has_video", True)
         seg = {"id": s.get("id") or store.new_id("g"), "source": src["id"], "start": round(start, 3),
-               "end": round(end, 3), "audio": "keep" if s.get("audio") == "keep" else "mute",
+               "end": round(end, 3), "audio": "keep" if s.get("audio") == "keep" or is_voice else "mute",
                "framing": "fit" if s.get("framing") == "fit" else "crop",
                "crop_x": round(max(0.0, min(1.0, float(s.get("crop_x", 0.5)))), 3),
                "overlay": None, "why": str(s.get("why", ""))[:300]}
         ov = s.get("overlay")
         if ov:
             osrc = sources.get(ov.get("source"))
-            if not osrc:
-                raise HTTPException(400, "Illustration liée à un rush inconnu")
+            if not osrc or not osrc["info"].get("has_video", True):
+                raise HTTPException(400, "Illustration liée à un rush vidéo inconnu")
             length = end - start
             if osrc["info"]["duration"] < length:
                 raise HTTPException(400, f"Illustration {osrc['label']} trop courte pour ce segment")
             ostart = min(max(0.0, float(ov.get("start", 0))), osrc["info"]["duration"] - length)
             seg["overlay"] = {"source": osrc["id"], "start": round(ostart, 3)}
+        elif is_voice:
+            raise HTTPException(400, f"Voix off {src['label']} : ajoute une illustration (image) à ce segment")
         clean.append(seg)
     return clean
 

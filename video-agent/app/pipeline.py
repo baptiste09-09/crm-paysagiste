@@ -13,6 +13,21 @@ def _set_source(pid: str, sid: str, **fields) -> None:
     store.update(pid, fn)
 
 
+def _analyze_voice(pid: str, src: dict, out_dir: Path, info: dict, step) -> None:
+    """Voix off (son seul) : pas d'images à analyser, seulement la transcription."""
+    step(0.01, "voix off, extraction du son")
+    media.ingest_audio(src["path"], out_dir, info, on_progress=lambda f: step(0.01 + 0.3 * f))
+    step(0.35, "transcription locale (Whisper)")
+    transcript = transcribe.transcribe(out_dir / "audio.wav")
+    (out_dir / "transcript.json").write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "audio.wav").unlink(missing_ok=True)
+    warn = [transcript["warning"]] if transcript.get("warning") else []
+    if not transcript.get("segments") and not warn:
+        warn.append("Aucune parole détectée dans cette voix off.")
+    _set_source(pid, src["id"], status="pret", shots=[], warnings=warn, kind="voix",
+                speech=bool(transcript.get("segments")), error=None, analyzed=time.time())
+
+
 def analyze_project(job, pid: str) -> None:
     media.require_ffmpeg()
     project = store.load(pid)
@@ -33,6 +48,12 @@ def analyze_project(job, pid: str) -> None:
             step(0, f"[{i + 1}/{n}] {name} : lecture")
             info = media.probe(src["path"])
             _set_source(pid, src["id"], info=info, status="analyse")
+
+            if not info.get("has_video", True):
+                prefix = f"[{i + 1}/{n}] {name}"
+                _analyze_voice(pid, src, out_dir, info,
+                               lambda f, msg=None: step(f, f"{prefix} : {msg}" if msg else None))
+                continue
 
             step(0.01, f"[{i + 1}/{n}] {name} : proxy + audio + images (passe unique)")
             cuts = media.ingest(src["path"], out_dir, info,

@@ -39,6 +39,7 @@ modal.onclick = (e) => { if (e.target === modal) closeModal(); };
 const S = { info: null, project: null, tab: "rushs", words: {}, drafts: {}, uploads: [], seenJobs: {}, lastReload: 0 };
 const pidUrl = () => `/api/projects/${S.project.id}`;
 const srcById = (id) => S.project.sources.find((s) => s.id === id);
+const isVoice = (s) => (s.info ? s.info.has_video === false : s.label[0] === "V");
 const proxyUrl = (sid) => `/files/${S.project.id}/src/${sid}/proxy/proxy.mp4`;
 const frameUrl = (sid, t) => `/files/${S.project.id}/src/${sid}/frames/${String(Math.floor(Math.max(0, t)) + 1).padStart(6, "0")}.jpg`;
 
@@ -125,9 +126,10 @@ function shotCard(src, sh, pick) {
 
 function srcCard(s) {
   const first = s.shots && s.shots[0];
-  const thumb = first && first.thumb ? `<img class="thumb" src="/files/${S.project.id}/src/${s.id}/frames/${esc(first.thumb)}" alt="">` : `<div class="thumb"></div>`;
-  const i = s.info;
-  const info = i ? ` · ${fmtDur(i.duration)} · ${i.width}×${i.height}${i.hdr ? " · HDR" : ""}` : "";
+  const thumb = isVoice(s) ? `<div class="thumb voice">🎙</div>` : first && first.thumb ? `<img class="thumb" src="/files/${S.project.id}/src/${s.id}/frames/${esc(first.thumb)}" alt="">` : `<div class="thumb"></div>`;
+  const i = s.info, voice = isVoice(s);
+  const info = !i ? "" : voice ? ` · ${fmtDur(i.duration)} · 🎙 voix off`
+    : ` · ${fmtDur(i.duration)} · ${i.width}×${i.height}${i.hdr ? " · HDR" : ""}`;
   return `<div class="card">
     <div class="src">${thumb}
       <div class="grow">
@@ -153,10 +155,11 @@ function renderRushs() {
     <div class="card stack">
       <div class="row">
         <button id="addfolder">📁 Dossier du Mac</button>
-        <label class="btn">📱 Envoyer depuis cet appareil<input type="file" id="upl" accept="video/*" multiple hidden></label>
+        <label class="btn">📱 Envoyer vidéos / voix off<input type="file" id="upl" accept="video/*,audio/*" multiple hidden></label>
         <button class="primary" id="analyze" ${pending ? "" : "disabled"}>Analyser${pending ? ` (${pending})` : ""}</button>
       </div>
-      <p class="muted">${p.sources.length} rushs · ${fmtSize(total)}. L'analyse lit chaque fichier une seule fois (proxy, son, images), puis transcrit la parole sur le Mac et fait décrire les plans par Claude (seules des vignettes partent sur Internet).</p>
+      <p class="muted">${p.sources.length} rushs · ${fmtSize(total)}. L'analyse lit chaque fichier une seule fois (proxy, son, images), puis transcrit la parole sur le Mac et fait décrire les plans par Claude (seules des vignettes partent sur Internet).
+        Voix off : ajoute aussi tes enregistrements du dictaphone (.m4a, .mp3…), l'agent pose les images dessus.</p>
     </div>
     <div id="uploads" class="uploads"></div>
     ${p.sources.map(srcCard).join("")}`;
@@ -182,7 +185,7 @@ async function browse(path) {
   openModal("Choisir un dossier de rushs", `
     <div class="row">${d.shortcuts.map((s) => `<button class="mini" data-go="${esc(s.path)}">${esc(s.name)}</button>`).join("")}</div>
     <p class="small muted" style="overflow-wrap:anywhere">${esc(d.path)}</p>
-    <div class="card row spread"><span>${d.videos} vidéo(s) ici${d.videos ? " · " + fmtSize(d.size) : ""}</span><button class="primary" id="pickdir">Ajouter ce dossier</button></div>
+    <div class="card row spread"><span>${d.videos} fichier(s) vidéo ou voix off ici${d.videos ? " · " + fmtSize(d.size) : ""}</span><button class="primary" id="pickdir">Ajouter ce dossier</button></div>
     <p class="muted small">Sous-dossiers inclus. Les fichiers restent où ils sont (disque externe possible, à garder branché jusqu'au rendu).</p>
     <div class="dirs">${d.parent ? `<button data-go="${esc(d.parent)}">⬆︎ Dossier parent</button>` : ""}
       ${d.dirs.map((x) => `<button data-go="${esc(x.path)}">📁 ${esc(x.name)}</button>`).join("")}</div>`);
@@ -329,21 +332,21 @@ function exportBlock(d) {
 }
 
 function segRow(g, i, n) {
-  const src = srcById(g.source), vis = g.overlay ? srcById(g.overlay.source) : src;
+  const src = srcById(g.source), vis = g.overlay ? srcById(g.overlay.source) : src, voice = isVoice(src);
   const vt = g.overlay ? g.overlay.start : g.start, dur = g.end - g.start;
   const text = segWords(g).map((w) => w[0]).join(" ");
   return `<div class="seg" data-i="${i}">
     <img src="${frameUrl(vis.id, vt + Math.min(0.5, dur / 2))}" alt="" style="object-position:${(g.crop_x * 100).toFixed(0)}% 50%;object-fit:${g.framing === "fit" ? "contain" : "cover"}" onerror="this.style.visibility='hidden'">
     <div class="stack">
-      <div class="row spread"><b>${i + 1}. ${esc(src.label)} ${fmtT(g.start)}→${fmtT(g.end)} s <span class="muted">(${dur.toFixed(1)} s)</span></b>
+      <div class="row spread"><b>${i + 1}. ${voice ? "🎙 " : ""}${esc(src.label)} ${fmtT(g.start)}→${fmtT(g.end)} s <span class="muted">(${dur.toFixed(1)} s)</span></b>
         <span class="row"><button class="mini ghost" data-act="up" ${i === 0 ? "disabled" : ""} aria-label="Monter">↑</button><button class="mini ghost" data-act="down" ${i === n - 1 ? "disabled" : ""} aria-label="Descendre">↓</button><button class="mini ghost danger" data-act="del" aria-label="Supprimer">✕</button></span></div>
       ${text ? `<div class="txt">« ${esc(text)} »</div>` : ""}
-      ${g.overlay ? `<div class="small">🎞 Illustration : ${esc(vis.label)} à ${fmtT(g.overlay.start)} s <button class="mini ghost" data-act="ovdel">retirer</button></div>` : ""}
+      ${g.overlay ? `<div class="small">🎞 Illustration : ${esc(vis.label)} à ${fmtT(g.overlay.start)} s ${voice ? "" : `<button class="mini ghost" data-act="ovdel">retirer</button>`}</div>` : ""}
       ${g.why ? `<div class="muted small">💡 ${esc(g.why)}</div>` : ""}
       <div class="row">
         <span class="small">Début</span><button class="mini" data-act="s-">−</button><button class="mini" data-act="s+">+</button>
         <span class="small">Fin</span><button class="mini" data-act="e-">−</button><button class="mini" data-act="e+">+</button>
-        <button class="mini" data-act="audio">${g.audio === "keep" ? "🔊 Son" : "🔇 Muet"}</button>
+        ${voice ? "" : `<button class="mini" data-act="audio">${g.audio === "keep" ? "🔊 Son" : "🔇 Muet"}</button>`}
         <button class="mini" data-act="ov">${g.overlay ? "Changer l'illustration" : "+ Illustration"}</button>
         <select data-act="framing" style="width:auto;min-height:32px;padding:2px 6px">
           <option value="crop" ${g.framing !== "fit" ? "selected" : ""}>Recadrer</option>
@@ -499,7 +502,7 @@ async function saveClip(cid) {
 }
 
 function pickShot(title, cb) {
-  const srcs = S.project.sources.filter((s) => s.status === "pret");
+  const srcs = S.project.sources.filter((s) => s.status === "pret" && s.shots && s.shots.length);
   openModal(title, `<input id="shotq" placeholder="Filtrer : drone, avant, pelouse, R02…">
     ${srcs.map((s) => `<h3 style="margin-top:14px">${esc(s.label)} · ${esc(s.name)}</h3>
       <div class="shots">${s.shots.map((sh) => shotCard(s, sh, true)).join("")}</div>`).join("")}`);

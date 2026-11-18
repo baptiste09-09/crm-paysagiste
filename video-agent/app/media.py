@@ -76,9 +76,15 @@ def probe(path: str | Path) -> dict:
     data = json.loads(res.stdout)
     video = next((s for s in data["streams"] if s.get("codec_type") == "video"
                   and s.get("disposition", {}).get("attached_pic") != 1), None)
-    if video is None:
-        raise FFmpegError(f"Pas de piste vidéo : {Path(path).name}")
     audio = next((s for s in data["streams"] if s.get("codec_type") == "audio"), None)
+    if video is None and audio is None:
+        raise FFmpegError(f"Ni image ni son : {Path(path).name}")
+    if video is None:  # voix off (dictaphone, mémo vocal)
+        return {
+            "duration": round(float(data["format"].get("duration") or audio.get("duration") or 0), 3),
+            "width": 0, "height": 0, "fps": 0, "codec": audio.get("codec_name"), "hdr": False,
+            "has_audio": True, "has_video": False, "orientation": "audio",
+        }
 
     rotation = 0
     for sd in video.get("side_data_list", []) or []:
@@ -101,6 +107,7 @@ def probe(path: str | Path) -> dict:
         "codec": video.get("codec_name"),
         "hdr": transfer in ("smpte2084", "arib-std-b67"),
         "has_audio": audio is not None,
+        "has_video": True,
         "orientation": "vertical" if h > w else "horizontal",
     }
 
@@ -174,6 +181,15 @@ def ingest(src: str | Path, out_dir: Path, info: dict, on_progress=None) -> list
     stderr = _run_with_progress(cmd, info["duration"], on_progress)
     cuts = sorted({round(float(m), 3) for m in re.findall(r"pts_time:\s*([\d.]+)", stderr)})
     return cuts
+
+
+def ingest_audio(src: str | Path, out_dir: Path, info: dict, on_progress=None) -> None:
+    """Voix off : proxy son pour l'aperçu + son 16 kHz pour Whisper, en une passe."""
+    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-progress", "pipe:1", "-nostats", "-i", str(src),
+           "-map", "0:a:0", "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart",
+           str(out_dir / "proxy.mp4"),
+           "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(out_dir / "audio.wav")]
+    _run_with_progress(cmd, info["duration"], on_progress)
 
 
 def build_shots(duration: float, cuts: list[float], min_len=1.0, max_len=9.0) -> list[dict]:
