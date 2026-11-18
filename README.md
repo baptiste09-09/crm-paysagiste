@@ -145,3 +145,9 @@ options de sécurité dans l'espace client OVHcloud si disponible pour ton offre
 - Le PIN chiffre les données uniquement sur l'appareil : s'il est oublié, les données
   existantes ne sont pas récupérables (comportement voulu, pas un bug).
 - L'import IA ne lit que du texte collé ou des fichiers `.txt` ; le PDF n'est pas branché.
+
+## Agent de montage vidéo (réseaux sociaux)
+
+Outil séparé dans [`video-agent/`](video-agent/README.md) : transforme des rushs bruts (10 Go et plus)
+en Reels / TikTok / Shorts sous-titrés, avec validation avant rendu. Tourne en local sur le Mac,
+pilotable depuis le téléphone en Wi-Fi.

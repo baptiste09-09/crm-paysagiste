@@ -1,0 +1,36 @@
+#!/bin/bash
+# Double-clic sur ce fichier dans le Finder pour lancer l'agent de montage.
+cd "$(dirname "$0")" || exit 1
+
+pause() { read -r -p "Appuie sur Entrée pour fermer…"; }
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "FFmpeg manque. Installe-le dans le Terminal avec :  brew install ffmpeg"
+  pause; exit 1
+fi
+
+PY=""
+for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then
+    PY="$candidate"; break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "Python 3.10 ou plus récent est requis. Installe-le avec :  brew install python@3.12"
+  pause; exit 1
+fi
+
+if [ ! -x .venv/bin/python ]; then
+  echo "Première installation (quelques minutes)…"
+  "$PY" -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt || { pause; exit 1; }
+fi
+
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo "VIDEO_AGENT_TOKEN=$(openssl rand -hex 8)" >> .env   # lien stable pour le téléphone
+  echo "Colle ta clé API Anthropic dans le fichier .env qui va s'ouvrir, enregistre, puis relance."
+  open -e .env
+  pause; exit 0
+fi
+
+exec .venv/bin/python -m app
