@@ -138,7 +138,7 @@ function srcCard(s) {
         ${s.error ? `<div class="error">${esc(s.error)}</div>` : ""}
         ${(s.warnings || []).map((w) => `<div class="warnbox">${esc(w)}</div>`).join("")}
         <div class="row" style="margin-top:6px">
-          ${s.shots && s.shots.length ? `<button class="mini" data-shots="${s.id}">Voir les ${s.shots.length} plans</button>` : ""}
+          ${s.shots && s.shots.length ? `<button class="mini" data-shots="${s.id}">Voir ${s.shots.length > 1 ? `les ${s.shots.length} plans` : "le plan"}</button>` : ""}
           <button class="mini ghost danger" data-delsrc="${s.id}">Retirer</button>
         </div>
       </div>
@@ -344,8 +344,8 @@ function segRow(g, i, n) {
       ${g.overlay ? `<div class="small">🎞 Illustration : ${esc(vis.label)} à ${fmtT(g.overlay.start)} s ${voice ? "" : `<button class="mini ghost" data-act="ovdel">retirer</button>`}</div>` : ""}
       ${g.why ? `<div class="muted small">💡 ${esc(g.why)}</div>` : ""}
       <div class="row">
-        <span class="small">Début</span><button class="mini" data-act="s-">−</button><button class="mini" data-act="s+">+</button>
-        <span class="small">Fin</span><button class="mini" data-act="e-">−</button><button class="mini" data-act="e+">+</button>
+        <span class="grp"><span class="small">Début</span><button class="mini" data-act="s-" aria-label="Début plus tôt">−</button><button class="mini" data-act="s+" aria-label="Début plus tard">+</button></span>
+        <span class="grp"><span class="small">Fin</span><button class="mini" data-act="e-" aria-label="Fin plus tôt">−</button><button class="mini" data-act="e+" aria-label="Fin plus tard">+</button></span>
         ${voice ? "" : `<button class="mini" data-act="audio">${g.audio === "keep" ? "🔊 Son" : "🔇 Muet"}</button>`}
         <button class="mini" data-act="ov">${g.overlay ? "Changer l'illustration" : "+ Illustration"}</button>
         <select data-act="framing" style="width:auto;min-height:32px;padding:2px 6px">
@@ -370,6 +370,8 @@ const clipInfo = (d) => `${esc(d.angle)} · ${fmtDur(clipTotal(d))} · ${d.segme
 function renderClip(cid) {
   const d = draft(cid), el = $(`#clip-${cid}`);
   if (!el) return;
+  const g0 = d.segments[0];
+  const poster = g0 ? frameUrl(g0.overlay ? g0.overlay.source : g0.source, (g0.overlay ? g0.overlay.start : g0.start) + 0.5) : "";
   const musics = ["", ...S.info.music];
   el.innerHTML = `
     <div class="row spread"><input class="grow" data-f="title" value="${esc(d.title)}" style="font-weight:700"><span class="badge ${esc(d.status)}">${STATUS[d.status] || esc(d.status)}</span></div>
@@ -377,7 +379,7 @@ function renderClip(cid) {
     <div class="clip-layout">
       <div>
         <div class="phone" id="ph-${cid}">
-          <video playsinline muted preload="none"></video>
+          <video playsinline muted preload="none" ${poster ? `poster="${poster}"` : ""} style="object-position:${g0 ? g0.crop_x * 100 : 50}% 50%"></video>
           <div class="hook" hidden></div><div class="sub"></div><div class="time"></div>
           <div class="ctrl"><button data-play="${cid}" aria-label="Aperçu">▶</button></div>
         </div>
