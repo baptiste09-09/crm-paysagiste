@@ -76,6 +76,14 @@ def _ollama(model: str, system: str, content: list, schema: dict) -> dict:
         raise LLMError(f"Réponse illisible du modèle {model} ({e}). Réessaie.")
 
 
+def unload(model: str) -> None:
+    """Libère la mémoire d'un modèle local (utile sur un Mac 16 Go). Sans effet si Ollama est arrêté."""
+    try:
+        _call_ollama("/api/generate", {"model": model, "keep_alive": 0}, timeout=30)
+    except Exception:
+        pass
+
+
 # ------------------------------------------------------------------ Claude (API payante)
 
 _client = None

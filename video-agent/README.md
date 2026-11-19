@@ -66,6 +66,10 @@ Testé dans un conteneur Linux sur un fichier 4K de 23,7 Go et sur des rushs hor
 3. Le Terminal affiche deux liens et un QR code. Scanne le QR code avec le téléphone
    et ajoute la page à l'écran d'accueil. Le lien reste le même d'un lancement à l'autre.
 
+**Mac 16 Go** : l'agent utilise les modèles 7B (le 14B ne tient pas avec le contexte nécessaire).
+Le modèle d'images est déchargé à la fin de l'analyse pour libérer la mémoire. Pendant une analyse,
+ferme les applis lourdes (navigateur avec beaucoup d'onglets, montage vidéo) et garde le Mac branché.
+
 Lancement manuel équivalent :
 ```bash
 cd video-agent

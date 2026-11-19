@@ -93,6 +93,8 @@ def analyze_project(job, pid: str) -> None:
         except Exception as e:
             _set_source(pid, src["id"], status="erreur", error=str(e))
             job.progress(base + 1 / n, f"{name} : erreur ({e})")
+    if config.IA_VISION != "claude":  # libère ~6 Go avant la proposition de montages et le rendu
+        analyze.llm.unload(analyze.llm.vision_model())
     job.progress(1.0, "Analyse terminée")
 
 
