@@ -1,4 +1,4 @@
-"""L'agent monteur : Claude lit le catalogue des rushs (plans décrits + paroles horodatées)
+"""L'agent monteur : l'IA (locale ou Claude) lit le catalogue des rushs (plans décrits + paroles horodatées)
 et propose plusieurs clips verticaux. Le plan de montage est ensuite nettoyé ici
 (coupes calées sur les mots, silences retirés) avant d'être soumis à validation."""
 import json
@@ -113,7 +113,8 @@ def load_transcript(pid: str, sid: str) -> dict:
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"segments": []}
 
 
-def catalog(project: dict) -> str:
+def catalog(project: dict, compact: bool = False) -> str:
+    """compact : sans les plans inutilisables ou de mauvaise qualité (contexte limité des modèles locaux)."""
     lines = []
     for src in project["sources"]:
         if src.get("status") != "pret":
@@ -130,6 +131,8 @@ def catalog(project: dict) -> str:
                      f"{info['orientation']} — parole : {'oui' if tr.get('segments') else 'non'}")
         lines.append("Plans (id | début–fin | qualité q, intérêt i | sujet_x | tags | description) :")
         for sh in src.get("shots", []):
+            if compact and ("inutilisable" in sh.get("tags", []) or sh.get("qualite", 3) <= 2):
+                continue
             lines.append(f"{sh['id']} | {sh['start']:.1f}–{sh['end']:.1f} | q{sh.get('qualite', '?')} "
                          f"i{sh.get('interet', '?')} | x{sh.get('sujet_x', 0.5)} | "
                          f"{','.join(sh.get('tags', []))} | {sh.get('description', '')}")
@@ -323,7 +326,8 @@ def clean_clip(project: dict, raw: dict, tighten: bool = True) -> dict:
 
 
 def plan(project: dict) -> tuple[list[dict], float]:
-    cat = catalog(project)
+    local = config.IA_MONTAGE != "claude"
+    cat = catalog(project, compact=local)
     if not cat.strip():
         raise llm.LLMError("Aucun rush analysé : lance d'abord l'analyse.")
     content = [
@@ -331,6 +335,7 @@ def plan(project: dict) -> tuple[list[dict], float]:
         {"type": "text", "text": f"# Brief\n{brief_text(project['brief'])}\n\n"
                                  "Propose les clips demandés."},
     ]
-    data, cost = llm.structured(config.CLAUDE_MODEL, SYSTEM, content, SCHEMA, effort="high", max_tokens=48000)
+    data, cost = llm.structured(config.IA_MONTAGE, llm.montage_model(), SYSTEM, content, SCHEMA,
+                                effort="high", max_tokens=48000)
     clips = [clean_clip(project, c) for c in data["clips"]]
     return [c for c in clips if c["segments"]], cost

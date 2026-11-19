@@ -8,7 +8,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, jobs, media, pipeline, store, transcribe
+from . import config, jobs, llm, media, pipeline, store, transcribe
 
 app = FastAPI(title="Agent montage vidéo")
 STATIC = Path(__file__).parent / "static"
@@ -56,8 +56,7 @@ def info():
         "hw_encoder": ok and config.IS_MAC and "h264_videotoolbox" in media.available_encoders(),
         "hdr_tonemap": ok and "zscale" in media.available_filters(),
         "whisper": transcribe.engine_name() or None,
-        "model": config.CLAUDE_MODEL,
-        "api_key": bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")),
+        "ia": llm.status(),
         "music": pipeline.music_files(),
         "music_dir": str(config.MUSIC_DIR),
         "home": str(config.HOME),

@@ -32,6 +32,28 @@ PORT = int(os.environ.get("VIDEO_AGENT_PORT", "8765"))
 # Jeton exigé par l'interface (le serveur écoute sur le Wi-Fi pour le téléphone).
 TOKEN = os.environ.get("VIDEO_AGENT_TOKEN") or secrets.token_urlsafe(12)
 
+
+def _ram_gb() -> float:
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
+    except (ValueError, OSError, AttributeError):
+        return 16.0
+
+
+RAM_GB = _ram_gb()
+
+# IA utilisée pour décrire les images (vision) et pour proposer les montages :
+#   "local"  = gratuit, modèles open source exécutés sur le Mac via Ollama (par défaut)
+#   "claude" = API payante d'Anthropic, meilleure qualité de montage
+IA_VISION = os.environ.get("IA_VISION", "local").strip().lower()
+IA_MONTAGE = os.environ.get("IA_MONTAGE", "local").strip().lower()
+
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+LOCAL_VISION_MODEL = os.environ.get("LOCAL_VISION_MODEL", "qwen2.5vl:7b")
+# 14B si la mémoire le permet (meilleurs montages), sinon 7B
+LOCAL_TEXT_MODEL = os.environ.get("LOCAL_TEXT_MODEL", "qwen2.5:14b" if RAM_GB >= 30 else "qwen2.5:7b")
+LOCAL_MAX_CTX = int(os.environ.get("LOCAL_MAX_CTX", "32768"))
+
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 VISION_MODEL = os.environ.get("VISION_MODEL", CLAUDE_MODEL)
 

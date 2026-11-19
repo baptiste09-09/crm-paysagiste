@@ -1,6 +1,7 @@
-"""Analyse visuelle des plans par Claude : description, tags, qualité, position du sujet.
+"""Analyse visuelle des plans par l'IA : description, tags, qualité, position du sujet.
 
-Seules de petites vignettes (3 images de 320 px par plan) partent vers l'API, jamais la vidéo.
+L'IA reçoit 3 petites images (320 px) par plan, jamais la vidéo. En mode local (par défaut),
+rien ne quitte le Mac.
 """
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -60,23 +61,35 @@ def _describe_batch(items: list[tuple[str, dict, Path, str]]) -> tuple[dict, flo
         content.append({"type": "image", "source": {
             "type": "base64", "media_type": "image/jpeg",
             "data": base64.standard_b64encode(strip.read_bytes()).decode()}})
-    data, cost = llm.structured(config.VISION_MODEL, SYSTEM, content, SCHEMA, effort="low", max_tokens=16000)
-    return {p["id"]: p for p in data["plans"]}, cost
+    data, cost = llm.structured(config.IA_VISION, llm.vision_model(), SYSTEM, content, SCHEMA,
+                                effort="low", max_tokens=16000)
+    plans = data["plans"]
+    if len(items) == 1 and len(plans) == 1:  # un petit modèle peut mal recopier l'identifiant
+        plans[0]["id"] = items[0][0]
+    return {p["id"]: p for p in plans}, cost
 
 
 def describe_shots(items: list[tuple[str, dict, Path, str]], on_progress=None) -> tuple[dict, float]:
     """items : (id, plan, chemin de la vignette, paroles). Renvoie {id: analyse}, coût total."""
-    batches = [items[i:i + BATCH] for i in range(0, len(items), BATCH)]
+    local = config.IA_VISION != "claude"
+    size = 1 if local else BATCH  # un plan par requête : plus fiable avec un modèle local
+    batches = [items[i:i + size] for i in range(0, len(items), size)]
     results, total_cost, done = {}, 0.0, 0
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=1 if local else 4) as pool:  # Ollama traite une requête à la fois
         futures = [pool.submit(_describe_batch, b) for b in batches]
+        errors = []
         for fut in as_completed(futures):
-            res, cost = fut.result()
-            results.update(res)
-            total_cost += cost
+            try:
+                res, cost = fut.result()
+                results.update(res)
+                total_cost += cost
+            except llm.LLMError as e:  # un plan raté n'arrête pas l'analyse du rush
+                errors.append(e)
             done += 1
             if on_progress:
                 on_progress(done / len(batches))
+    if errors and not results:  # tout a échoué : IA indisponible, on remonte la cause
+        raise errors[0]
     for r in results.values():
         r["qualite"] = max(1, min(5, int(r["qualite"])))
         r["interet"] = max(1, min(5, int(r["interet"])))

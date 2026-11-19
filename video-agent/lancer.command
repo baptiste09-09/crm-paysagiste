@@ -28,9 +28,30 @@ fi
 if [ ! -f .env ]; then
   cp .env.example .env
   echo "VIDEO_AGENT_TOKEN=$(openssl rand -hex 8)" >> .env   # lien stable pour le téléphone
-  echo "Colle ta clé API Anthropic dans le fichier .env qui va s'ouvrir, enregistre, puis relance."
-  open -e .env
-  pause; exit 0
+fi
+
+# IA locale (gratuite) : Ollama + modèles open source, téléchargés une seule fois
+read -r IA_V IA_M MODEL_V MODEL_T < <(.venv/bin/python -c \
+  "from app import config as c; print(c.IA_VISION, c.IA_MONTAGE, c.LOCAL_VISION_MODEL, c.LOCAL_TEXT_MODEL)")
+NEEDED=""
+[ "$IA_V" != "claude" ] && NEEDED="$MODEL_V"
+[ "$IA_M" != "claude" ] && NEEDED="$NEEDED $MODEL_T"
+if [ -n "$NEEDED" ]; then
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "Ollama manque (IA locale gratuite). Installe-le avec :  brew install ollama"
+    pause; exit 1
+  fi
+  if ! curl -s --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null; then
+    echo "Démarrage d'Ollama…"
+    (ollama serve >/dev/null 2>&1 &)
+    sleep 3
+  fi
+  for m in $NEEDED; do
+    if ! ollama list | awk 'NR>1 {print $1}' | grep -Fxq "$m"; then
+      echo "Téléchargement du modèle $m (une seule fois, plusieurs Go)…"
+      ollama pull "$m" || { pause; exit 1; }
+    fi
+  done
 fi
 
 exec .venv/bin/python -m app

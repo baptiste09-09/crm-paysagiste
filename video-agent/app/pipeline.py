@@ -73,7 +73,7 @@ def analyze_project(job, pid: str) -> None:
                 transcript = transcribe.transcribe(out_dir / "audio.wav")
             (out_dir / "transcript.json").write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
 
-            step(0.8, f"[{i + 1}/{n}] {name} : analyse des images par Claude")
+            step(0.8, f"[{i + 1}/{n}] {name} : analyse des images par l'IA")
             items = [(sh["id"], sh, out_dir / "strips" / sh["strip"],
                       transcribe.text_between(transcript, sh["start"], sh["end"]))
                      for sh in shots if sh["strip"]]
@@ -98,9 +98,11 @@ def analyze_project(job, pid: str) -> None:
 
 def plan_project(job, pid: str) -> None:
     project = store.load(pid)
-    job.progress(0.1, "Claude prépare les montages…")
+    job.progress(0.1, "L'agent prépare les montages… (plusieurs minutes avec l'IA locale)")
     clips, cost = planner.plan(project)
     job.add_cost(cost)
+    if not clips:
+        raise planner.llm.LLMError("Aucun montage exploitable proposé. Relance, ou précise le brief.")
 
     def fn(p):
         p["clips"] = [c for c in p["clips"] if c.get("status") == "rendu"] + clips

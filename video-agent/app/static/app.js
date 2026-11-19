@@ -48,7 +48,9 @@ function renderStatus() {
   const i = S.info, chips = [];
   chips.push(i.ffmpeg ? `<span class="chip">FFmpeg${i.hw_encoder ? " · accéléré" : ""}</span>` : `<span class="chip bad">FFmpeg absent</span>`);
   chips.push(i.whisper ? `<span class="chip">${esc(i.whisper)}</span>` : `<span class="chip warn">Whisper absent</span>`);
-  chips.push(i.api_key ? `<span class="chip">Claude</span>` : `<span class="chip bad">Clé Claude absente</span>`);
+  const ia = i.ia, local = ia.vision !== "claude" && ia.montage !== "claude";
+  const iaLabel = local ? "IA locale · gratuite" : ia.vision === "claude" && ia.montage === "claude" ? "Claude" : "IA locale + Claude";
+  chips.push(ia.ok ? `<span class="chip">${iaLabel}</span>` : `<span class="chip bad">${esc(ia.detail)}</span>`);
   chips.push(`<span class="chip ${i.free_gb < 20 ? "warn" : ""}">${i.free_gb} Go libres</span>`);
   $("#status").innerHTML = chips.join("");
 }
@@ -158,7 +160,7 @@ function renderRushs() {
         <label class="btn">📱 Envoyer vidéos / voix off<input type="file" id="upl" accept="video/*,audio/*" multiple hidden></label>
         <button class="primary" id="analyze" ${pending ? "" : "disabled"}>Analyser${pending ? ` (${pending})` : ""}</button>
       </div>
-      <p class="muted">${p.sources.length} rushs · ${fmtSize(total)}. L'analyse lit chaque fichier une seule fois (proxy, son, images), puis transcrit la parole sur le Mac et fait décrire les plans par Claude (seules des vignettes partent sur Internet).
+      <p class="muted">${p.sources.length} rushs · ${fmtSize(total)}. L'analyse lit chaque fichier une seule fois (proxy, son, images), puis transcrit la parole et fait décrire les plans par l'IA (en IA locale, rien ne quitte le Mac).
         Voix off : ajoute aussi tes enregistrements du dictaphone (.m4a, .mp3…), l'agent pose les images dessus.</p>
     </div>
     <div id="uploads" class="uploads"></div>

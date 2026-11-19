@@ -4,6 +4,9 @@ Outil local qui transforme un lot de rushs bruts (10 Go et plus) en plusieurs vi
 prêtes à publier : sous-titres animés, accroche, recadrage 9:16, musique, niveau sonore réseaux.
 Tu valides et ajustes chaque montage avant le rendu final.
 
+**Gratuit et open source par défaut** : FFmpeg, Whisper et des modèles d'IA open source (Qwen, via
+Ollama) tournent sur le Mac. Aucun abonnement, aucune clé API. Claude reste disponible en option payante.
+
 **Le Mac fait le travail lourd, le téléphone sert de télécommande** : depuis le Galaxy (même Wi-Fi),
 tu envoies des rushs, tu valides les montages et tu télécharges la vidéo finale dans la galerie.
 
@@ -12,8 +15,8 @@ tu envoies des rushs, tu valides les montages et tu télécharges la vidéo fina
 Un artifact tourne dans un navigateur : la mémoire d'un onglet et FFmpeg compilé pour le web
 (limité à environ 2 Go par fichier, sans accélération matérielle) ne tiennent pas 10 Go de rushs 4K.
 Envoyer 10 Go dans le cloud à chaque chantier coûterait aussi du temps de transfert.
-Ici, les rushs restent sur le Mac et sont lus sur place ; seules de petites vignettes et le texte
-transcrit partent vers l'API Claude.
+Ici, les rushs restent sur le Mac et sont lus sur place. Avec l'IA locale (par défaut), rien ne part
+sur Internet ; avec l'option Claude, seules de petites vignettes et le texte transcrit sont envoyés.
 
 ## Comment ça marche
 
@@ -22,10 +25,10 @@ Rushs vidéo + voix off (dossier du Mac, disque externe ou envoi depuis le tél�
   │  1. FFmpeg lit chaque fichier UNE fois → proxy 960p + son 16 kHz + 1 image/s + coupes de plans
   │  2. Whisper transcrit la parole sur le Mac (mlx-whisper, GPU de la puce M), mot par mot,
   │     celle filmée sur le chantier comme celle des voix off enregistrées à part
-  │  3. Claude décrit chaque plan (3 vignettes) : contenu, tags, qualité, intérêt, position du sujet
+  │  3. L'IA décrit chaque plan (3 vignettes) : contenu, tags, qualité, intérêt, position du sujet
   ▼
 Catalogue (plans décrits + paroles horodatées) + ton brief
-  │  4. Claude (l'agent monteur) propose N clips : accroche, segments, plans d'illustration, légende
+  │  4. L'IA (l'agent monteur) propose N clips : accroche, segments, plans d'illustration, légende
   │  5. Nettoyage automatique : coupes calées sur les mots, silences retirés
   ▼
 Validation dans l'interface (ordre, durées, son, illustration, cadrage, textes)
@@ -48,22 +51,27 @@ Testé dans un conteneur Linux sur un fichier 4K de 23,7 Go et sur des rushs hor
 
 1. Installer [Homebrew](https://brew.sh) si besoin, puis dans le Terminal :
    ```bash
-   brew install ffmpeg python@3.12
+   brew install ffmpeg python@3.12 ollama
+   brew services start ollama
    ```
-2. Créer une clé API sur [console.anthropic.com](https://console.anthropic.com) (menu *API keys*).
-3. Double-cliquer sur `video-agent/lancer.command`.
-   - Au premier lancement, il installe les dépendances puis ouvre `.env` : colle ta clé après
-     `ANTHROPIC_API_KEY=`, enregistre et relance.
-   - Si macOS bloque le fichier : clic droit → Ouvrir.
-   - Accepte la demande « autoriser les connexions entrantes » (sinon le téléphone ne pourra pas se connecter).
-4. Le Terminal affiche deux liens et un QR code. Scanne le QR code avec le téléphone
+2. Double-cliquer sur `video-agent/lancer.command`. Au premier lancement, il installe tout seul :
+   - les dépendances Python ;
+   - les modèles d'IA open source (une seule fois, environ 11 Go : `qwen2.5vl:7b` ≈ 6 Go pour les
+     images et `qwen2.5:7b` ≈ 5 Go pour le montage ; `qwen2.5:14b` ≈ 9 Go si le Mac a 32 Go de RAM) ;
+   - le modèle de transcription Whisper (≈ 1,5 Go, à la première analyse).
+
+   Si macOS bloque le fichier : clic droit → Ouvrir, ou Réglages → Confidentialité et sécurité →
+   « Ouvrir quand même ». Accepte la demande « autoriser les connexions entrantes » (sinon le
+   téléphone ne pourra pas se connecter).
+3. Le Terminal affiche deux liens et un QR code. Scanne le QR code avec le téléphone
    et ajoute la page à l'écran d'accueil. Le lien reste le même d'un lancement à l'autre.
 
 Lancement manuel équivalent :
 ```bash
 cd video-agent
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env   # puis renseigner la clé
+cp .env.example .env
+ollama pull qwen2.5vl:7b && ollama pull qwen2.5:7b
 .venv/bin/python -m app
 ```
 
@@ -101,24 +109,42 @@ Option : une musique libre de droits intégrée par l'agent (choix par clip, fic
 ## Réglages conseillés pour le Galaxy S24 Ultra
 
 - **Format** : 4K 30 i/s ou 1080p 60 i/s. Filmer à la verticale ce qui sera de la parole face caméra ;
-  l'horizontal est recadré automatiquement (position du sujet détectée par Claude, ajustable).
+  l'horizontal est recadré automatiquement (position du sujet détectée par l'IA, ajustable).
 - **HDR10+** : géré (conversion en SDR), mais désactiver « Vidéo HDR10+ » dans l'appareil photo
   donne des couleurs plus fidèles et une analyse plus rapide.
 - **Transfert vers le Mac** : par la page web (Wi-Fi), ou par câble USB-C avec
   [OpenMTP](https://openmtp.ganeshrvel.com) pour 10 Go et plus (souvent plus rapide et plus fiable).
 - **Son** : un micro-cravate améliore nettement la transcription en extérieur (vent, machines).
 
-## Coût
+## Coût : 0 € par défaut
 
-- Transcription, analyse et rendu : sur le Mac, gratuit.
-- API Claude : le coût réel de chaque tâche s'affiche à la fin. Ordre de grandeur estimé avec
-  Claude Opus 5.5 : environ 1 à 4 $ par lot de 10 Go selon la durée filmée (10 Go ≈ 25 à 30 min
-  en 4K, beaucoup plus en 1080p). La part principale est l'analyse des images ; pour la diviser,
-  mettre `VISION_MODEL=claude-haiku-5-5` dans `.env` (descriptions moins fines).
+Tout tourne sur le Mac avec des logiciels libres : FFmpeg (LGPL/GPL), Whisper (MIT), Ollama (MIT),
+modèles Qwen2.5 7B/14B et Qwen2.5-VL 7B (Apache 2.0). Seul coût : l'électricité.
+
+**Pas besoin d'entraîner un modèle.** Ces modèles sont déjà entraînés ; l'agent les guide avec des
+consignes de monteur et un format de réponse imposé. Entraîner son propre modèle demanderait des
+milliers d'exemples annotés et beaucoup de calcul, pour un gain incertain.
+
+### IA locale ou Claude : ce que tu gagnes et perds
+
+| | IA locale (défaut) | Claude (option) |
+|---|---|---|
+| Prix | 0 € | ≈ 1 à 4 $ par lot de 10 Go (estimation) |
+| Confidentialité | rien ne quitte le Mac | vignettes + texte envoyés à l'API |
+| Qualité des montages | correcte, plus de retouches à la main | meilleurs choix de plans et de phrases |
+| Vitesse | plus lent (le Mac fait tout ; plusieurs secondes par plan) | rapide |
+| Volume par projet | limité par la mémoire : au-delà d’environ 30 à 45 min de rushs, répartir en plusieurs projets | pas de limite pratique |
+
+Mélange possible dans `.env` : `IA_VISION=local` (la partie la plus volumineuse, gratuite) et
+`IA_MONTAGE=claude` (la décision de montage, ≈ 0,10 à 0,50 $ par proposition, estimation). Pour Claude,
+ajouter `ANTHROPIC_API_KEY=` (clé sur console.anthropic.com, facturée à part de l'abonnement Claude.ai).
+
+Les modèles locaux sont interchangeables (`LOCAL_VISION_MODEL`, `LOCAL_TEXT_MODEL`) : tout modèle
+d'[ollama.com/library](https://ollama.com/library) compatible images / texte peut être essayé.
 
 ## Confidentialité
 
-- Les vidéos ne quittent pas le Mac. Partent vers l'API Claude : vignettes 320 px et texte transcrit.
+- Avec l'IA locale, rien ne quitte le Mac. Avec l'option Claude : vignettes 320 px et texte transcrit.
 - Le serveur écoute sur le Wi-Fi local et exige un jeton (présent dans le lien / QR code).
   Ne pas l'utiliser sur un Wi-Fi public.
 
@@ -131,14 +157,14 @@ Option : une musique libre de droits intégrée par l'agent (choix par clip, fic
 
 ## Ce qui a été vérifié
 
-Dans un conteneur Linux (FFmpeg 6.1, sans GPU Apple, sans clé API ni modèle Whisper) :
+Dans un conteneur Linux (FFmpeg 6.1, sans GPU Apple, sans clé API, sans modèle Whisper ni Ollama) :
 analyse d'un fichier 4K de 23,7 Go en 201 s sur 4 cœurs CPU (RAM max : 89 Mo pour l'app,
 441 Mo pour FFmpeg) puis rendu d'un clip depuis ce fichier (1,6 Go de RAM max), chaîne analyse → plan → rendu sur rushs de synthèse
-(Claude et Whisper simulés), sortie 1080×1920 à la durée exacte prévue, −15 LUFS avec musique,
+(IA et Whisper simulés ; IA locale testée contre un faux serveur Ollama), sortie 1080×1920 à la durée exacte prévue, −15 LUFS avec musique,
 interface pilotée en format téléphone, envoi interrompu puis repris (fichier identique à l'octet),
 voix off : découpe sous plusieurs images sans mot répété ni perdu, image ajoutée automatiquement si absente.
 Non vérifié ici, à valider au premier lancement sur le Mac : mlx-whisper, l'encodeur matériel Apple,
-et les vraies réponses de Claude.
+la vitesse et la qualité réelles des modèles locaux (et de Claude si activé).
 
 ## Structure
 
@@ -146,8 +172,9 @@ et les vraies réponses de Claude.
 app/
   media.py       FFmpeg : analyse en une passe, découpe en plans, vignettes
   transcribe.py  Whisper local, mots horodatés, filtre des phrases inventées sur les silences
-  analyze.py     Claude vision : description / qualité / position du sujet par plan
-  planner.py     Claude monteur : propose les clips ; nettoyage des coupes
+  llm.py         IA locale (Ollama) ou Claude, réponse JSON imposée par schéma
+  analyze.py     vision : description / qualité / position du sujet par plan
+  planner.py     agent monteur : propose les clips ; nettoyage des coupes
   render.py      rendu 9:16 depuis les originaux, assemblage sans réencodage vidéo
   subtitles.py   sous-titres ASS mot à mot + accroche
   server.py      API + envoi par morceaux ; jobs.py file de tâches ; store.py projets
