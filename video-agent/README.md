@@ -106,6 +106,27 @@ reste compréhensible. Sur un compte professionnel, le catalogue de musiques com
 Option : une musique libre de droits intégrée par l'agent (choix par clip, fichiers dans
 `~/VideoAgent/musique`). Elle est alors baissée automatiquement quand tu parles et remonte dans les pauses.
 
+## Faire progresser l'agent : il apprend de tes corrections
+
+Pas besoin d'entraîner un modèle pour qu'il travaille « à ton image » :
+
+1. **Tu corriges et tu notes.** Sur chaque clip : ordre, durées, images, accroche… puis une note
+   (1 à 5★) et un avis libre dans « Ton avis pour l'agent ».
+2. **Le rendu final vaut validation.** L'agent enregistre sa proposition, ta version finale, la liste
+   de tes corrections (plan retiré, accroche changée, durée raccourcie…) et ton avis. Une proposition
+   supprimée sans être utilisée est aussi retenue.
+3. **Il relit avant chaque proposition** tes règles de style et tes meilleurs montages validés
+   (2 à 3 exemples). Effet immédiat, gratuit.
+4. **Il propose des règles** (Brief → « Ce que l'agent apprend de toi » → « Proposer des règles d'après
+   mes corrections ») ; tu coches celles qui sont justes. Tu restes le seul à décider.
+5. **Exporter le journal** (même écran) : un fichier à me renvoyer pour que j'affine les consignes de l'agent.
+
+Fichiers : `~/VideoAgent/apprentissage/regles.md` (tes règles) et `exemples.jsonl` (le journal).
+
+Plus tard, avec une centaine de montages validés, ce journal pourra servir à ré-entraîner le modèle local
+(technique LoRA, faisable sur le Mac). C'est seulement utile si les règles + exemples ne suffisent plus :
+on mesurera avant.
+
 ## Réglages conseillés pour le Galaxy S24 Ultra
 
 - **Format** : 4K 30 i/s ou 1080p 60 i/s. Filmer à la verticale ce qui sera de la parole face caméra ;
@@ -175,6 +196,7 @@ app/
   llm.py         IA locale (Ollama) ou Claude, réponse JSON imposée par schéma
   analyze.py     vision : description / qualité / position du sujet par plan
   planner.py     agent monteur : propose les clips ; nettoyage des coupes
+  learning.py    apprentissage : journal des corrections, règles de style, exemples relus par l'agent
   render.py      rendu 9:16 depuis les originaux, assemblage sans réencodage vidéo
   subtitles.py   sous-titres ASS mot à mot + accroche
   server.py      API + envoi par morceaux ; jobs.py file de tâches ; store.py projets

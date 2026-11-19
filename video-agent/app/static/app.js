@@ -272,7 +272,9 @@ function renderBrief() {
       <p class="muted small">Dossier musique : ${esc(S.info.music_dir)}. Sur un compte professionnel, Instagram et TikTok limitent l'accès aux musiques commerciales : pour un son tendance, ajoute-le dans l'appli au moment de publier.</p>
       <label class="field"><span>Consignes pour l'agent</span><textarea data-b="notes" placeholder="Ex. mettre en avant le robot de tonte, ne pas montrer le visage du client…">${esc(b.notes)}</textarea></label>
       <div class="row"><button id="bsave">Enregistrer</button><button class="primary" id="bplan">✨ Enregistrer et proposer les montages</button></div>
-    </div>`;
+    </div>
+    <div class="card stack" id="learn"><b>🧠 Ce que l'agent apprend de toi</b><p class="muted">Chargement…</p></div>`;
+  renderLearning();
   const collect = () => Object.fromEntries($$("[data-b]").map((el) => [el.dataset.b, el.type === "number" ? Number(el.value) : el.value]));
   const save = async () => { S.project.brief = await api(`${pidUrl()}/brief`, { method: "PUT", body: collect() }); };
   $("#bsave").onclick = () => save().then(() => toast("Brief enregistré")).catch((e) => toast(e.message));
@@ -291,6 +293,46 @@ async function startPlan() {
   toast("L'agent prépare les montages…");
   pollJobs(true);
   location.hash = `#/p/${S.project.id}/clips`;
+}
+
+async function renderLearning() {
+  const box = $("#learn");
+  if (!box) return;
+  let L;
+  try { L = await api("/api/apprentissage"); } catch (e) { box.innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+  box.innerHTML = `
+    <b>🧠 Ce que l'agent apprend de toi</b>
+    <p class="muted">${L.valides} montage(s) validé(s) · ${L.rejetes} proposition(s) rejetée(s)${L.note_moyenne ? ` · note moyenne ${L.note_moyenne}/5` : ""}.
+      Avant chaque proposition, l'agent relit tes règles ci-dessous et tes meilleurs montages validés.</p>
+    <label class="field"><span>Mes règles de style (une par ligne, prioritaires sur tout le reste)</span>
+      <textarea id="rules" rows="6" placeholder="Ex. : commencer par le résultat final ; accroche de 5 mots maximum">${esc(L.regles)}</textarea></label>
+    <div class="row">
+      <button id="rsave">Enregistrer mes règles</button>
+      <button id="rsuggest" ${L.valides + L.rejetes ? "" : "disabled"}>✨ Proposer des règles d'après mes corrections</button>
+      <a class="btn ghost" href="/api/apprentissage/export" download>⬇︎ Exporter le journal</a>
+    </div>
+    <div id="suggestions"></div>
+    ${L.recents.length ? `<details><summary class="small">Dernières corrections retenues</summary>
+      ${L.recents.map((r) => `<p class="small"><b>${esc(r.titre)}</b> · ${r.statut === "valide" ? "validé" : "rejeté"}${r.note ? ` · ${r.note}★` : ""}<br><span class="muted">${esc(r.corrections.join(" ; "))}</span></p>`).join("")}
+    </details>` : ""}`;
+  const saveRules = async (txt) => { await api("/api/apprentissage/regles", { method: "PUT", body: { texte: txt } }); };
+  $("#rsave").onclick = () => saveRules($("#rules").value).then(() => toast("Règles enregistrées")).catch((e) => toast(e.message));
+  $("#rsuggest").onclick = async () => {
+    const out = $("#suggestions"), btn = $("#rsuggest");
+    btn.disabled = true;
+    out.innerHTML = `<p class="muted small">L'agent relit tes corrections… (jusqu'à quelques minutes avec l'IA locale)</p>`;
+    try {
+      const { regles } = await api("/api/apprentissage/suggestions", { method: "POST" });
+      if (!regles.length) { out.innerHTML = `<p class="muted small">Pas encore assez de corrections récurrentes pour en tirer une règle.</p>`; return; }
+      out.innerHTML = `<div class="stack">${regles.map((r, i) => `<label class="row small"><input type="checkbox" data-sug="${i}" checked> ${esc(r)}</label>`).join("")}
+        <button class="primary mini" id="sugadd">Ajouter les règles cochées</button></div>`;
+      $("#sugadd").onclick = async () => {
+        const picked = $$("[data-sug]", out).filter((c) => c.checked).map((c) => "- " + regles[Number(c.dataset.sug)]);
+        const txt = [$("#rules").value.trim(), ...picked].filter(Boolean).join("\n");
+        await saveRules(txt); toast(`${picked.length} règle(s) ajoutée(s)`); renderLearning();
+      };
+    } catch (e) { out.innerHTML = `<div class="error">${esc(e.message)}</div>`; } finally { btn.disabled = false; }
+  };
 }
 
 // ------------------------------------------------------------ onglet Clips
@@ -398,6 +440,12 @@ function renderClip(cid) {
           <label class="field"><span>Musique</span><select data-f="music">${musics.map((m) => `<option value="${esc(m)}" ${m === d.music ? "selected" : ""}>${m ? esc(m) : "Sans musique"}</option>`).join("")}</select></label>
           <label class="row"><input type="checkbox" data-f="subtitles" ${d.subtitles ? "checked" : ""} style="width:auto;min-height:0"> Sous-titres incrustés</label>
         </div>
+        <div class="feedback stack">
+          <b>🧠 Ton avis pour l'agent</b>
+          <div class="row">${[1, 2, 3, 4, 5].map((n) => `<button class="mini note ${d.note === n ? "on" : ""}" data-note="${n}" aria-label="Note ${n} sur 5">${n}★</button>`).join("")}</div>
+          <textarea data-f="avis" placeholder="Ce qui n'allait pas, ce que tu veux la prochaine fois (ex. « accroche trop longue, commence par le résultat »)">${esc(d.avis || "")}</textarea>
+          <p class="muted small">Au rendu final, l'agent retient ta version, tes corrections et cet avis pour les prochains montages.</p>
+        </div>
         <div class="row">
           <button data-save="${cid}" ${d._dirty ? "" : "disabled"}>Enregistrer</button>
           <button class="primary" data-render="${cid}">🎞 Rendu final</button>
@@ -413,6 +461,12 @@ function renderClip(cid) {
       markDirty(cid);
     });
   });
+  $$("[data-note]", el).forEach((b) => (b.onclick = () => {
+    const n = Number(b.dataset.note);
+    d.note = d.note === n ? null : n;
+    $$("[data-note]", el).forEach((x) => x.classList.toggle("on", Number(x.dataset.note) === d.note));
+    markDirty(cid);
+  }));
   $(`[data-play="${cid}"]`, el).onclick = () => playPreview(cid);
   $(`[data-save="${cid}"]`, el).onclick = () => saveClip(cid).then(() => toast("Enregistré")).catch((e) => toast(e.message));
   $(`[data-render="${cid}"]`, el).onclick = async () => {
@@ -496,7 +550,7 @@ function bindSegs(cid) {
 async function saveClip(cid) {
   const d = draft(cid);
   const body = { title: d.title, hook: d.hook, caption: d.caption, hashtags: d.hashtags, music: d.music,
-    subtitles: d.subtitles, segments: d.segments };
+    subtitles: d.subtitles, segments: d.segments, note: d.note ?? null, avis: d.avis || "" };
   const saved = await api(`${pidUrl()}/clips/${cid}`, { method: "PUT", body });
   const idx = S.project.clips.findIndex((c) => c.id === cid);
   S.project.clips[idx] = saved;

@@ -121,7 +121,10 @@ def render_project_clip(job, pid: str, cid: str) -> None:
         c = store.find_clip(p, cid)
         c["status"] = "rendu"
         c["export"] = render.export_info(final)
-    store.update(pid, fn)
+        return p
+    project = store.update(pid, fn)
+    from . import learning  # le rendu final vaut validation : on retient ta version
+    learning.record_validated(project, store.find_clip(project, cid))
 
 
 def delete_source_cache(pid: str, sid: str) -> None:

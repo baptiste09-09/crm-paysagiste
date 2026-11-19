@@ -1,14 +1,16 @@
 """API + interface web (Mac et téléphone sur le même Wi-Fi)."""
+import json
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, jobs, llm, media, pipeline, store, transcribe
+from . import config, jobs, learning, llm, media, pipeline, store, transcribe
 
 app = FastAPI(title="Agent montage vidéo")
 STATIC = Path(__file__).parent / "static"
@@ -338,8 +340,11 @@ def save_clip(pid: str, cid: str, payload: dict = Body(...)):
     project = _project(pid)
     segments = _validate_segments(project, payload.get("segments", []))
 
+    edit_keys = ("title", "hook", "caption", "music", "hashtags", "subtitles", "segments")
+
     def fn(p):
         c = store.find_clip(p, cid)
+        before = json.dumps([c.get(k) for k in edit_keys], sort_keys=True)
         for k in ("title", "hook", "caption", "music"):
             if k in payload:
                 c[k] = str(payload[k])
@@ -348,10 +353,17 @@ def save_clip(pid: str, cid: str, payload: dict = Body(...)):
         if "subtitles" in payload:
             c["subtitles"] = bool(payload["subtitles"])
         c["segments"] = segments
-        if c.get("status") == "rendu":
+        if "note" in payload:  # ton avis pour l'agent (1 à 5)
+            c["note"] = max(1, min(5, int(payload["note"]))) if payload["note"] else None
+        if "avis" in payload:
+            c["avis"] = str(payload["avis"])[:1500]
+        changed = json.dumps([c.get(k) for k in edit_keys], sort_keys=True) != before
+        if c.get("status") == "rendu" and changed:
             c["status"] = "modifie"
         return c
-    return store.update(pid, fn)
+    clip = store.update(pid, fn)
+    learning.update_feedback(cid, clip.get("note"), clip.get("avis", ""))
+    return clip
 
 
 @app.post("/api/projects/{pid}/clips")
@@ -368,9 +380,40 @@ def new_clip(pid: str):
 @app.delete("/api/projects/{pid}/clips/{cid}")
 def delete_clip(pid: str, cid: str):
     def fn(p):
-        p["clips"].remove(store.find_clip(p, cid))
-    store.update(pid, fn)
+        c = store.find_clip(p, cid)
+        p["clips"].remove(c)
+        return c
+    project = _project(pid)
+    clip = store.update(pid, fn)
+    learning.record_rejected(project, clip)  # une proposition jetée est aussi une information
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ apprentissage
+
+@app.get("/api/apprentissage")
+def learning_state():
+    return {**learning.stats(), "regles": learning.rules()}
+
+
+@app.put("/api/apprentissage/regles")
+def learning_rules(payload: dict = Body(...)):
+    learning.save_rules(str(payload.get("texte", ""))[:8000])
+    return {"regles": learning.rules()}
+
+
+@app.post("/api/apprentissage/suggestions")
+def learning_suggest():
+    try:
+        return {"regles": learning.suggest_rules()}
+    except llm.LLMError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/apprentissage/export")
+def learning_export():
+    return JSONResponse(learning.export(), headers={
+        "Content-Disposition": f'attachment; filename="apprentissage-{time.strftime("%Y%m%d")}.json"'})
 
 
 @app.post("/api/projects/{pid}/clips/{cid}/render")

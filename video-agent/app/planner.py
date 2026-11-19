@@ -330,12 +330,22 @@ def plan(project: dict) -> tuple[list[dict], float]:
     cat = catalog(project, compact=local)
     if not cat.strip():
         raise llm.LLMError("Aucun rush analysé : lance d'abord l'analyse.")
-    content = [
-        {"type": "text", "text": f"# Catalogue des rushs\n{cat}"},
-        {"type": "text", "text": f"# Brief\n{brief_text(project['brief'])}\n\n"
-                                 "Propose les clips demandés."},
-    ]
-    data, cost = llm.structured(config.IA_MONTAGE, llm.montage_model(), SYSTEM, content, SCHEMA,
+    from . import learning  # import tardif : learning dépend de ce module
+
+    system = SYSTEM
+    style = learning.rules().strip()
+    if style:
+        system += ("\n\nRègles de style du monteur, PRIORITAIRES sur les règles générales ci-dessus :\n" + style)
+    content = [{"type": "text", "text": f"# Catalogue des rushs\n{cat}"}]
+    examples = learning.examples_text(2 if local else 3)
+    if examples:
+        content.append({"type": "text", "text": "# Montages déjà validés par le monteur (inspire-toi de ses "
+                                                "choix et de ses corrections, pas de leurs plans)\n" + examples})
+    content.append({"type": "text", "text": f"# Brief\n{brief_text(project['brief'])}\n\nPropose les clips demandés."})
+    data, cost = llm.structured(config.IA_MONTAGE, llm.montage_model(), system, content, SCHEMA,
                                 effort="high", max_tokens=48000)
     clips = [clean_clip(project, c) for c in data["clips"]]
-    return [c for c in clips if c["segments"]], cost
+    clips = [c for c in clips if c["segments"]]
+    for c in clips:  # mémorisé pour comparer avec ta version finale
+        c["proposal"] = learning.snapshot(project, c)
+    return clips, cost
